@@ -1,0 +1,12 @@
+# Blueprint do Render: cria o serviço web do Complexo do Escadão 3D
+services:
+  - type: web
+    name: complexo-do-escadao-3d
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
