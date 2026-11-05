@@ -1,0 +1,18 @@
+{
+  "name": "favela-fps-v2",
+  "version": "2.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --input-type=module --check < public/game.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "three": "0.160.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
