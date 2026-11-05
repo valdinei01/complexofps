@@ -1,0 +1,9 @@
+{
+  "name": "complexo-do-escadao",
+  "version": "1.0.0",
+  "description": "Complexo do Escadão: jogo de estratégia no navegador com salas online para até 4 jogadores",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "license": "UNLICENSED"
+}
