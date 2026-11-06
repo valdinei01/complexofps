@@ -1,6 +1,17 @@
 # Complexo do Escadão 3D
 
-FPS multiplayer de navegador ambientado numa comunidade carioca fictícia. Modo **Dominação de Bases**, 5 contra 5 (jogadores + bots), com civis neutros, munição limitada e reabastecimento nas bases principais.
+FPS multiplayer de navegador ambientado numa comunidade carioca fictícia. Modo **Dominação de Bases**, 5 contra 5 (jogadores + bots), com civis neutros, carros circulando, munição limitada e reabastecimento nas bases principais.
+
+## Mapa (versão 2.1)
+
+140 × 280 m. As bases ficam nas pontas: **Base Azul** no sul e **Base Vermelha** no norte. Entre elas:
+
+- **Bairros** de cada time: baixada plana com ruas largas, becos e o Morro do Mirante.
+- **Zona Central**: Praça Central (Base A), Escadão no Morro do Escadão (Base B, no 3º patamar) e Canal (Base C, na beira do valão).
+- **Avenida das Américas** no lado oeste, com duas faixas, estacionamento, pontos de ônibus, comércio e carros andando nos dois sentidos.
+- **Beira do Valão** no lado leste: rota de flanco que atravessa o mapa inteiro.
+
+O mapa é espelhado entre as duas metades (mesmas ruas e alturas), para as partidas ficarem equilibradas.
 
 Este projeto é **independente** do jogo 2D de estratégia "Complexo do Escadão".
 
@@ -25,7 +36,12 @@ Abra `http://localhost:3000`. Para testar com amigos na mesma rede, use o IP do 
 3. Sem Blueprint: **New > Web Service**, ambiente Node, build `npm install`, start `npm start`.
 4. O endereço gerado (ex.: `https://complexo-do-escadao-3d.onrender.com`) é o jogo. Convites usam `https://.../sala/CODIGO`.
 
-Observação: no plano gratuito do Render o servidor "dorme" depois de um tempo sem uso; o primeiro acesso pode demorar cerca de um minuto.
+Observações sobre o Render:
+
+- No plano gratuito o servidor "dorme" depois de uns 15 minutos sem acesso; o primeiro acesso depois disso pode demorar cerca de um minuto.
+- A cada novo deploy o servidor reinicia e as salas abertas são encerradas. Quem estava jogando recebe um aviso e volta para a lista de salas.
+- O servidor usa a variável `PORT` que o Render fornece. Não é preciso configurar nada além do `render.yaml`.
+- Para ver erros, abra o painel do serviço no Render > **Logs**. Erros de uma sala aparecem com o código dela e não derrubam as outras.
 
 ## Testes automáticos
 
@@ -65,7 +81,9 @@ tests/               testes automáticos
 | Fuzil | 30 no carregador, 180 de reserva |
 | Pistola | 15 no carregador, 75 de reserva |
 | Reabastecimento | segurar 3 s na estação, raio 2,6 m, intervalo de 5 s |
-| Civis | 7 |
+| Civis | 10 |
+| Carros circulando | 10 |
+| Limite de tempo | 30 min |
 
 Depois de mudar `_game.js`, rode `python3 shared/build.py` para gerar o `sim.js`.
 
