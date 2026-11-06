@@ -1,1 +1,28 @@
-
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d0b0a">
+<title>Complexo do Escadão — FPS online</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&family=Permanent+Marker&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+  <canvas id="hud"></canvas>
+  <div id="touch" style="display:none"></div>
+  <div id="ui" class="ui"></div>
+  <div id="loading"><div class="lg1">COMPLEXO DO</div><div class="lg2">ESCADÃO</div><div class="lg3">Montando a comunidade…</div></div>
+</div>
+<script src="/socket.io/socket.io.js" onerror="void 0"></script>
+<script src="/shared/sim.js"></script>
+<script src="/js/render.js"></script>
+<script src="/js/audio.js"></script>
+<script src="/js/hud.js"></script>
+<script src="/js/play.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
