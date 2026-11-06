@@ -85,7 +85,7 @@ function draw(g, W, H, L, st) {
 }
 // minimapa (rotaciona com o jogador)
 function radar(g, W, H, L, img, me, dots, cell) {
-  const [x, y, s, a] = [L.radar.x * W, L.radar.y * H, L.radar.s, L.radar.a], r = 62 * s, k = r / 32 * cell, ca = Math.cos(me.yaw), sa = Math.sin(me.yaw);
+  const [x, y, s, a] = [L.radar.x * W, L.radar.y * H, L.radar.s, L.radar.a], r = 62 * s, k = r / 45 * cell, ca = Math.cos(me.yaw), sa = Math.sin(me.yaw);
   g.save(); g.globalAlpha = a; g.beginPath(); g.arc(x, y, r, 0, 7); g.fillStyle = 'rgba(14,11,9,.65)'; g.fill(); g.clip();
   g.translate(x, y); g.transform(-ca * k, -sa * k, sa * k, -ca * k, 0, 0); g.translate(-me.x / cell, -me.z / cell); g.imageSmoothingEnabled = false; g.drawImage(img, 0, 0);
   for (const d of dots) { g.fillStyle = d.col; if (d.kind === 'base') { g.beginPath(); g.arc(d.x / cell, d.z / cell, 9 / k, 0, 7); g.fill(); g.fillStyle = '#fff'; g.font = `400 ${Math.round(11 / k * 10) / 10}px Bungee, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.save(); g.translate(d.x / cell, d.z / cell); g.transform(-ca / k, sa / k, -sa / k, -ca / k, 0, 0); g.scale(k, k); g.scale(1 / k, 1 / k); g.restore(); }

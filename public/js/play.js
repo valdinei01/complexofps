@@ -43,10 +43,12 @@ P.startSession = function (opts, ui) {
     s.G = S.makeGame(map, W, { team: opts.team, diff: opts.diff, name: opts.name });
     s.me = s.G.player; s.myId = s.me.id;
   } else {
+    s.cars = (opts.start.cars || []).map(c => Object.assign({ spd: 0, vz: c.z }, c));
     s.socket = opts.socket; s.myId = opts.start.myId; s.roster = new Map(opts.start.roster.map(r => [r.id, r])); s.npcInfo = new Map(opts.start.npcs.map(n => [n.id, n]));
     s.actors = new Map(); s.npcs = new Map(); s.bases = S.makeGame ? null : null; s.score = [0, 0];
     s.me = { id: s.myId, team: (s.roster.get(s.myId) || {}).team || 0, x: 0, y: 0, z: 0, vy: 0, onGround: true, yaw: 0, pitch: 0, hp: 100, alive: false, crouch: false, spd: 0, anim: 0, ammo: { rifle: { mag: 30, res: 180 }, pistol: { mag: 15, res: 75 } }, cur: 'rifle', reloadT: 0, refillT: 0, respawnT: 0, bloom: 0, placed: false };
-    s.basesView = S.makeGame(map, W, { humans: [], bots: { 0: 0, 1: 0 }, local: true }).bases.map(b => Object.assign({}, b));
+    const helper = S.makeGame(map, W, { humans: [], bots: { 0: 0, 1: 0 }, local: true }); sectorFn = helper.sectorAt;
+    s.basesView = helper.bases.map(b => Object.assign({}, b));
     s.onSnap = d => onSnap(s, d); s.onEnd = d => { s.over = true; s.endData = d; ui.onEnd(d); };
     s.socket.on('game:snap', s.onSnap); s.socket.on('game:end', s.onEnd);
   }
@@ -64,6 +66,7 @@ function onSnap(s, d) {
     v.buf.push({ t: now, x, y, z, yaw, pitch }); if (v.buf.length > 8) v.buf.shift(); }
   for (const n of d.n) { const [id, x, y, z, yaw, alive, spd, dt] = n; let v = s.npcs.get(id); const info = s.npcInfo.get(id) || {}; if (!v) { v = { id, npc: true, team: 2, name: info.name, shirt: info.shirt || [0.8, 0.8, 0.7], skin: [0.75, 0.55, 0.4], buf: [], anim: 0 }; s.npcs.set(id, v); }
     v.alive = !!alive; v.spd = spd; v.deathT = dt; v.buf.push({ t: now, x, y, z, yaw, pitch: 0 }); if (v.buf.length > 8) v.buf.shift(); }
+  if (d.c && s.cars) d.c.forEach((c, i) => { const car = s.cars[i]; if (!car) return; if (Math.abs(c[0] - car.z) > 30) car.vz = c[0]; car.z = c[0]; car.spd = c[1]; });
   d.b.forEach((b, i) => { const v = s.basesView[i]; v.owner = b[0]; v.prog = b[1]; v.state = b[2]; v.inside = [b[3], b[4]]; });
   const me = s.me, m = d.me; if (m) {
     const wasAlive = me.alive; me.hp = m.hp; me.alive = m.alive; me.respawnT = m.rt; me.cur = m.cur; me.ammo.rifle.mag = m.am[0]; me.ammo.rifle.res = m.am[1]; me.ammo.pistol.mag = m.am[2]; me.ammo.pistol.res = m.am[3]; me.reloadT = m.rl; me.swapT = m.sw; me.refillT = m.rf; me.refillCd = m.rfc; me.near = m.near; me.invuln = m.inv ? 1 : 0;
@@ -81,7 +84,8 @@ function viewActors(s) { // posições interpoladas ~100 ms no passado
 }
 function sendInput(s, now) {
   if (now - s.lastSend < 50) return; s.lastSend = now; const I = s.input, me = s.me;
-  s.socket.emit('game:input', { x: me.x, y: me.y, z: me.z, yaw: me.yaw, pitch: me.pitch, mx: I.mx, mz: I.mz, f: I.fire ? 1 : 0, a: I.aim ? 1 : 0, c: I.crouch ? 1 : 0, sp: I.sprint ? 1 : 0, u: I.use ? 1 : 0, r: s.pendReload ? 1 : 0, sw: s.pendSwap ? 1 : 0 });
+  const pos = me.placed && me.alive ? { x: me.x, y: me.y, z: me.z } : {};
+  s.socket.emit('game:input', { ...pos, yaw: me.yaw, pitch: me.pitch, mx: I.mx, mz: I.mz, f: I.fire ? 1 : 0, a: I.aim ? 1 : 0, c: I.crouch ? 1 : 0, sp: I.sprint ? 1 : 0, u: I.use ? 1 : 0, r: s.pendReload ? 1 : 0, sw: s.pendSwap ? 1 : 0 });
   s.pendReload = false; s.pendSwap = false;
 }
 
@@ -141,6 +145,8 @@ P.frame = function (dt, view) {
       for (const e of G.events) handleEvent(s, e); G.events.length = 0;
       s.score = G.score; s.timeLeft = G.timeLeft; if (G.over && !s.over) { s.over = true; s.ui.onEnd(offlineEnd(G)); }
     } else {
+      // carros: andam suavemente entre as fotografias do servidor e viram obstáculo para a previsão local
+      Wd.dyn.length = 0; for (const c of s.cars) { c.vz += (c.z + c.dir * c.spd * 0.1 - c.vz) * Math.min(1, dt * 8); const x = S.aveX(clamp(c.vz, 0, S.ML)) + c.off; c.x = x; Wd.dyn.push({ x0: x - 1, x1: x + 1, z0: c.vz - 2.3, z1: c.vz + 2.3, top: c.van ? 2 : 1.5 }); }
       // previsão local do próprio movimento (o servidor valida e corrige)
       me.yaw -= I.dx; me.pitch = clamp(me.pitch - I.dy, -1.45, 1.45); I.dx = I.dy = 0;
       if (me.alive && me.placed) { me.crouch = I.crouch; const sprint = I.sprint && !I.aim && !me.crouch && I.mz > 0.3, speed = me.crouch ? 2.2 : I.aim ? 2.8 : sprint ? 6.1 : 4.6;
@@ -170,7 +176,7 @@ function camera(s, dt) {
   const k = s.killer != null ? actorById(s, s.killer) : null, t = Math.min(1, (me.deathT || 0) / 1.5), ey = me.y + 1.6 + t * 2.5; let yaw = me.yaw, pitch = -0.3 * t;
   if (k && k !== me) { const dx = k.x - me.x, dz = k.z - me.z; yaw = Math.atan2(dx, dz); pitch = Math.atan2(k.y + 1.3 - ey, Math.hypot(dx, dz)); } return { eye: [me.x, ey, me.z], yaw, pitch };
 }
-P.menuCamera = function (t) { const a = t * 0.05; return { eye: [12.5 + Math.sin(a) * 1.2, 1.9 + Math.sin(t * 0.07) * 0.2, 80 + Math.sin(a * 0.6) * 0.8], yaw: Math.PI / 2 + Math.sin(a * 0.9) * 0.07, pitch: 0.16 }; };
+P.menuCamera = function (t) { const a = t * 0.05, M = S.MID; return { eye: [33 + Math.sin(a) * 1.5, 1.9 + Math.sin(t * 0.07) * 0.2, M - 3 + Math.sin(a * 0.6) * 1.2], yaw: Math.PI / 2 + 0.08 + Math.sin(a * 0.9) * 0.07, pitch: 0.2 }; };
 P.renderScene = function (cam, aspect, extra) {
   const R = P.R, Q = P.quality(); const fov = (cam.fov || 74) * Math.PI / 180, vfov = aspect < 1 ? 2 * Math.atan(Math.tan(fov / 2) / Math.max(aspect, 0.56) * 0.9) : fov;
   const proj = m4.persp(vfov, aspect, 0.06, 900), f = [Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch)];
@@ -187,6 +193,7 @@ function render(s, dt, view) {
   const r = P.renderScene(cam, aspect, (VP, viewM) => {
     R.solidBegin();
     for (const a of others) { if (!a.alive && (a.deathT || 0) > 3.6) continue; if (Math.hypot(a.x - cam.eye[0], a.z - cam.eye[2]) > 170) continue; drawActor(R, a); }
+    for (const c of (s.mode === 'offline' ? s.G.cars : s.cars)) { const z = s.mode === 'offline' ? c.z : c.vz; if (Math.abs(z - cam.eye[2]) < 200) drawCar(R, c, z); }
     const right = [viewM[0], viewM[4], viewM[8]], up = [viewM[1], viewM[5], viewM[9]], v = [];
     // anéis e bandeiras das bases (cinza neutra, azul, vermelha)
     const w = [], tt = performance.now() / 1000;
@@ -212,6 +219,14 @@ function render(s, dt, view) {
   // passos de quem está perto
   s.stepT -= dt; if (s.stepT <= 0 && P.audio) { s.stepT = 0.34; for (const a of others) { if (!a.alive || a.npc || (a.spd || 0) < 3) continue; if (Math.hypot(a.x - me.x, a.z - me.z) < 16) P.audio.step(a.x, a.y, a.z); } }
   drawHud(s, view, bases, others);
+}
+function drawCar(R, c, z) {
+  const X = m4.mul, T = m4.tr, x = S.aveX(clamp(z, 0, S.ML)) + c.off, B = X(T(x, 0, z), m4.ry(c.dir > 0 ? 0 : Math.PI)), col = c.col, Pc = M => R.cube(M, col, 0), dark = [0.12, 0.12, 0.13];
+  if (c.van) { R.cube(X(X(B, T(0, 1.1, 0)), m4.sc(1.9, 1.6, 4.4)), col, 0); R.cube(X(X(B, T(0, 1.45, 2.21)), m4.sc(1.7, 0.6, 0.02)), [0.25, 0.32, 0.4], 0); }
+  else { Pc(X(X(B, T(0, 0.65, 0)), m4.sc(1.8, 0.62, 4.3))); R.cube(X(X(B, T(0, 1.18, -0.1)), m4.sc(1.6, 0.5, 2.1)), [0.3, 0.38, 0.48], 0); R.cube(X(X(B, T(0, 1.44, -0.1)), m4.sc(1.62, 0.04, 2.0)), col, 0); }
+  for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) R.cube(X(X(B, T(a * 0.88, 0.32, b * 1.35)), m4.sc(0.24, 0.64, 0.64)), dark, 0);
+  R.cube(X(X(B, T(-0.6, 0.72, 2.16)), m4.sc(0.3, 0.16, 0.02)), [2, 1.9, 1.5], 0); R.cube(X(X(B, T(0.6, 0.72, 2.16)), m4.sc(0.3, 0.16, 0.02)), [2, 1.9, 1.5], 0);
+  R.cube(X(X(B, T(-0.6, 0.75, -2.16)), m4.sc(0.3, 0.14, 0.02)), [1.6, 0.2, 0.15], 0); R.cube(X(X(B, T(0.6, 0.75, -2.16)), m4.sc(0.3, 0.14, 0.02)), [1.6, 0.2, 0.15], 0);
 }
 function drawActor(R, a) {
   const X = m4.mul, T = m4.tr, base = X(T(a.x, a.y, a.z), m4.ry(a.yaw)), flash = (a.hurtT || 0) > 0 ? 0.6 : 0;
@@ -266,6 +281,7 @@ function drawHud(s, view, bases, others) {
   const dots = []; for (const a of others) { if (!a.alive || a.npc) continue; const ally = a.team === me.team; if (!ally && !(s.mode === 'offline' && s.G.t - a.spotT < 1.6)) continue; dots.push({ x: a.x, z: a.z, col: ally ? TEAM[a.team].css : '#FF3B2F' }); }
   for (const b of bases) dots.push({ kind: 'base', x: b.x, z: b.z, col: HUD.BASE_COL(b.owner), label: b.id }); dots.push({ kind: 'supply', x: st0.x, z: st0.z, col: '#FFD24A' });
   HUD.radar(g, W, H, L, P.world.radar, me, dots, CELL);
+  if (me.alive) { const sec = sectorAt(s, me.x, me.z); if (sec) { const rx = L.radar.x * W, ry = L.radar.y * H + 68 * L.radar.s + 12; g.globalAlpha = L.radar.a; g.font = '700 11px Rubik, system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(sec, rx + 1, ry + 1); g.fillStyle = '#F4E6C8'; g.fillText(sec, rx, ry); g.globalAlpha = 1; } }
   if (view.board) drawBoard(g, s, W, H);
   if (view.showFps) { g.textAlign = 'left'; g.font = '600 11px monospace'; g.fillStyle = '#fff'; g.fillText(Math.round(view.fps) + ' fps', 10, H - 10); }
 }
@@ -275,5 +291,7 @@ function drawBoard(g, s, W, H) {
   for (const t of [0, 1]) { g.textAlign = 'left'; g.font = '400 14px Bungee, Rubik, sans-serif'; g.fillStyle = teamCss(t); g.fillText('Time ' + TEAM[t].name + '  ' + Math.floor((s.score || [0, 0])[t]) + '%', x + 14, yy); g.textAlign = 'right'; g.font = '600 11px Rubik, system-ui, sans-serif'; g.fillStyle = '#CDBFA8'; g.fillText('abates  mortes', x + bw - 14, yy); yy += 20;
     for (const a of list.filter(a => a.team === t)) { g.textAlign = 'left'; g.font = (a.id === s.myId ? '700 ' : '500 ') + '13px Rubik, system-ui, sans-serif'; g.fillStyle = '#fff'; g.fillText(a.name, x + 22, yy); g.textAlign = 'right'; g.fillText((a.kills || 0) + '        ' + (a.deaths || 0), x + bw - 22, yy); yy += 19; } yy += 6; }
 }
+let sectorFn = null;
+function sectorAt(s, x, z) { if (s.mode === 'offline') return s.G.sectorAt(x, z); if (!sectorFn) sectorFn = S.makeGame(P.world.map, P.world.W, { humans: [], bots: { 0: 0, 1: 0 }, local: true }).sectorAt; return sectorFn(x, z); }
 P.handleEvent = handleEvent;
 })();

@@ -4,7 +4,7 @@
 const S = window.EscSim, P = window.EscPlay, HUD = window.EscHUD;
 const $ = (q, el) => (el || document).querySelector(q);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const store = { get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 const cfg = P.cfg = Object.assign({ name: '', quality: 'medio', sens: 1, volume: 0.8, diff: 'normal', team: 0, showFps: false }, store.get('escadao3d-cfg', {}));
 const saveCfg = () => store.set('escadao3d-cfg', cfg);
@@ -89,6 +89,13 @@ function newsScreen() {
   app.screen = 'news';
   show(`<div class="panel">${back()}<h2>Novidades</h2><div class="news">
     <h4>Versão ${VERSION}</h4><ul>
+    <li><b>Mapa 3x maior</b> (140 × 280 m) com uma <b>Zona Central</b> entre os times: Praça Central, Escadão no morro e Canal.</li>
+    <li>Relevo variado: baixada plana perto da avenida e nas bases, o Morro do Escadão no meio e o Morro do Mirante em cada bairro.</li>
+    <li>Ruas principais, secundárias e becos mais largos. Avenida das Américas com duas faixas e estacionamento de cada lado.</li>
+    <li><b>Carros circulando</b> pela avenida nos dois sentidos. Eles param para pedestres e servem de cobertura.</li>
+    <li>Nome do setor onde você está aparece embaixo do minimapa.</li>
+    <li>Correções do servidor: salas não interferem mais umas nas outras, posição aceita em todo o mapa e reconexão após reinício do servidor.</li></ul>
+    <h4>Versão 2.0.0</h4><ul>
     <li>Novo modo <b>Dominação de Bases</b>: Base A (Praça Central), Base B (Escadão) e Base C (Canal). Cada base dominada rende 1% a cada 12 s; vence quem chegar a 100%.</li>
     <li><b>Munição limitada</b> com fuzil (30/180) e pistola (15/75). Reabastecimento nas estações das bases principais.</li>
     <li><b>Civis</b> circulando pela comunidade. Eliminar um civil custa 5% da pontuação do time.</li>
@@ -121,19 +128,26 @@ function settingsScreen(fromGame) {
 // ---------------- online ----------------
 function connect(then) {
   if (!ONLINE) return toast('Servidor indisponível neste arquivo.', true);
-  if (app.socket && app.socket.connected) return then && then();
+  if (app.socket && app.socket.connected && app.helloOk) return then && then();
   if (!app.socket) {
-    app.socket = window.io({ transports: ['websocket', 'polling'], reconnection: true });
+    app.socket = window.io({ reconnection: true, reconnectionDelay: 800, reconnectionDelayMax: 4000, timeout: 20000 });
     const s = app.socket;
-    s.on('connect', () => s.emit('hello', { key, name: cfg.name || 'Jogador' }, r => { if (r && r.rejoined) { app.room = r.rejoined; if (r.state === 'lobby') lobbyScreen(); } if (app.pendingConnect) { const f = app.pendingConnect; app.pendingConnect = null; f(); } }));
+    s.on('connect', () => s.emit('hello', { key, name: cfg.name || 'Jogador' }, r => {
+      app.helloOk = true;
+      if (r && r.rejoined) { app.room = r.rejoined; if (r.state === 'lobby' && app.screen !== 'lobby') { if (P.sess) endGame(); lobbyScreen(); } }
+      else if (app.room) { // o servidor reiniciou (ex.: nova versão no Render) e a sala deixou de existir
+        app.room = null; app.lobby = null; if (P.sess) endGame(); toast('A conexão voltou, mas a sala não existe mais (o servidor foi reiniciado).', true); roomsScreen(); if (app.screen === 'rooms') s.emit('rooms:sub'); } if (app.pendingConnect) { const f = app.pendingConnect; app.pendingConnect = null; f(); } }));
+    s.on('disconnect', () => { app.helloOk = false; });
     s.on('disconnect', () => { if (P.sess && P.sess.mode === 'online') toast('Conexão perdida. Tentando reconectar…', true); });
+    s.on('connect_error', () => { if (!app.warnedConn) { app.warnedConn = true; toast('Não foi possível falar com o servidor. Tentando de novo…', true); } });
+    s.on('connect', () => { app.warnedConn = false; if (app.screen === 'rooms') s.emit('rooms:sub'); });
     s.on('rooms:list', list => { app.rooms = list; if (app.screen === 'rooms') renderRoomList(); });
     s.on('lobby:state', st => { app.lobby = st; app.room = st.id; if (app.screen === 'lobby') renderLobby(); });
     s.on('lobby:back', () => { if (P.sess) endGame(); lobbyScreen(); });
     s.on('game:start', d => startOnline(d));
     s.on('room:closed', () => { app.room = null; app.lobby = null; if (P.sess) endGame(); toast('A sala foi encerrada.'); roomsScreen(); });
   }
-  app.pendingConnect = then; if (app.socket.connected && then) { app.pendingConnect = null; then(); }
+  app.pendingConnect = then; if (app.socket.connected && app.helloOk && then) { app.pendingConnect = null; then(); }
 }
 function leaveOnlineList() { if (app.socket && app.socket.connected) app.socket.emit('rooms:unsub'); }
 function roomsScreen() {
