@@ -1,0 +1,16 @@
+# Gera dist/complexo-do-escadao-3d.html: um arquivo único que roda o jogo sem servidor (treino com bots).
+# As salas online exigem o servidor (npm start / Render).
+import base64, os, re
+R = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+rd = lambda p: open(os.path.join(R, p), encoding='utf-8').read()
+b64 = lambda p: 'data:audio/mpeg;base64,' + base64.b64encode(open(os.path.join(R, p), 'rb').read()).decode()
+html = rd('public/index.html')
+html = html.replace('<link rel="stylesheet" href="/css/style.css">', '<style>\n' + rd('public/css/style.css') + '\n</style>')
+html = html.replace('<script src="/socket.io/socket.io.js" onerror="void 0"></script>\n', '')
+html = html.replace('<script src="/shared/sim.js"></script>', '<script>window.ESC_AUDIO={rifle:"%s",pistol:"%s"};</script>\n<script>\n%s\n</script>' % (b64('public/audio/fuzil.mp3'), b64('public/audio/pistola.mp3'), rd('shared/sim.js')))
+for f in ['render', 'audio', 'hud', 'play', 'app']:
+    html = html.replace('<script src="/js/%s.js"></script>' % f, '<script>\n' + rd('public/js/%s.js' % f) + '\n</script>')
+assert '/js/' not in html.split('<script>')[0]
+os.makedirs(os.path.join(R, 'dist'), exist_ok=True)
+open(os.path.join(R, 'dist', 'complexo-do-escadao-3d.html'), 'w', encoding='utf-8').write(html)
+print('ok', len(html))
