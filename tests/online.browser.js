@@ -49,6 +49,9 @@ const FAKE = `window.io = function () {
   await A.page.evaluate(() => { EscPlay.sess.input.fire = true; }); await A.page.waitForTimeout(1500); await A.page.evaluate(() => { EscPlay.sess.input.fire = false; }); await A.page.waitForTimeout(800);
   console.log('munição da Ana (servidor):', JSON.stringify(sv.ammo.rifle), '| cliente:', await A.page.evaluate(() => JSON.stringify(EscPlay.sess.me.ammo.rifle)));
   await A.page.screenshot({ path: 'tests/shots/on_gameA.png', timeout: 120000 }); await B.page.screenshot({ path: 'tests/shots/on_gameB.png', timeout: 120000 });
+  // Ana lança uma granada: o servidor desconta e o Beto vê a explosão
+  await A.page.evaluate(() => { EscPlay.sess.input.gren = true; }); await A.page.waitForTimeout(4500);
+  console.log('granadas da Ana (servidor):', sv.gren, '| cliente:', await A.page.evaluate(() => EscPlay.sess.me.gren), '| hora do dia igual nos dois:', (await A.page.evaluate(() => EscPlay.sess.dayT.toFixed(3))) === (await B.page.evaluate(() => EscPlay.sess.dayT.toFixed(3))), '| carros no Beto:', await B.page.evaluate(() => EscPlay.sess.cars.filter(c => c.x).length));
   // Beto desconecta e volta
   const bKey = [...room.players.values()].find(p => p.name === 'Beto').key; B.client.disconnect(); await A.page.waitForTimeout(500);
   console.log('Beto conectado após cair?', room.players.get(bKey).connected);

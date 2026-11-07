@@ -52,8 +52,16 @@ test('servidor valida movimento e munição (cliente não inventa munição nem 
 });
 test('movimento válido é aceito em qualquer parte do mapa grande (regressão: limite antigo de 80 m)', () => {
   const { io, rm } = setup(); const a = player(io, 'Ana'); const r = a.emit('room:create', { name: 'M', bots0: 0, bots1: 0 }); a.emit('lobby:start'); ticks(rm, 20);
-  const room = rm.rooms.get(r.id), act = room.game.actors[0], W = room.game.W, c = W.nearestOK(118, 200, 6); act.x = W.cellX(c); act.z = W.cellZ(c); act.y = room.game.map.H[c];
+  const room = rm.rooms.get(r.id), act = room.game.actors[0], W = room.game.W, c = W.nearestOK(230, 60, 6); act.x = W.cellX(c); act.z = W.cellZ(c); act.y = room.game.map.H[c];
   const nc = W.nearestOK(act.x, act.z + 0.3, 2); clock += 50; a.emit('game:input', { x: W.cellX(nc), y: room.game.map.H[nc], z: W.cellZ(nc), yaw: 0, pitch: 0 }); eq(act.x, W.cellX(nc), 'aceito em x=' + act.x); ok(!room.players.get('key-Ana').rejects, 'sem rejeição');
+});
+test('granadas: servidor limita o estoque mesmo com pedidos repetidos; dia/noite sincronizado', () => {
+  const { io, rm } = setup(); const a = player(io, 'Ana'), b = player(io, 'Beto'); const r = a.emit('room:create', { name: 'G', bots0: 0, bots1: 0 }); b.emit('room:join', { id: r.id }); a.emit('lobby:start'); ticks(rm, 20);
+  const room = rm.rooms.get(r.id), act = room.players.get('key-Ana').actor;
+  for (let k = 0; k < 12; k++) { clock += 50; a.emit('game:input', { yaw: 0, pitch: -1, g: 1 }); ticks(rm, 6); }
+  const thrown = (a.got['game:snap'] || []).reduce((n, sn) => n + sn.ev.filter(e => e.type === 'gthrow' && e.id === act.id).length, 0);
+  eq(thrown, 2, 'só 2 granadas mesmo com 12 pedidos'); eq(a.last['game:snap'].me.gn, 0, 'contador zerado');
+  const dnA = a.last['game:snap'].dn, dnB = b.last['game:snap'].dn; ok(typeof dnA === 'number' && dnA === dnB, 'mesma hora do dia para os dois');
 });
 test('desconexão e reconexão voltam ao mesmo personagem; saída do anfitrião passa o comando', () => {
   const { io, rm } = setup(); const a = player(io, 'Ana'), b = player(io, 'Beto'); const r = a.emit('room:create', { name: 'R', bots0: 0, bots1: 0 }); b.emit('room:join', { id: r.id }); a.emit('lobby:start'); ticks(rm, 10);
