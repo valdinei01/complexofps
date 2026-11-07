@@ -11,6 +11,7 @@ const CONFIG = {
   npcRespawn: 25,
   refill: { time: 3, radius: 2.6, cooldown: 5 },
   grenade: { start: 2, max: 2, fuse: 2.6, radius: 6.5, damage: 115, speed: 15, cooldown: 1.2 }, // granadas: quantidade e efeito em área
+  baile: { radius: 2.8, cooldown: 2 },   // caixa de som do baile: liga/desliga perto da mesa de som
   dayLength: 20 * 60,    // ciclo completo de dia e noite (segundos reais)
   dayStart: 0.3,         // hora inicial (0 = meia-noite, 0.25 = 6h, 0.5 = meio-dia, 0.75 = 18h)
   weapons: {
@@ -185,6 +186,11 @@ function makeGame(map, W, opts) {
     if (a.refillT >= CONFIG.refill.time) { a.ammo = loadout(); a.gren = Math.max(a.gren || 0, CONFIG.grenade.max); a.refillT = 0; a.refillCd = CONFIG.refill.cooldown; a.reloadT = 0; emit({ type: 'refill', id: a.id }); }
   }
   // ---------- granadas (o servidor valida estoque e calcula a explosão) ----------
+  // ---------- som do baile (estado no servidor: todos ouvem a mesma música no mesmo ponto) ----------
+  G.baile = { on: false, t0: 0, by: 0, cd: 0 };
+  const nearDesk = a => a.alive && Math.hypot(a.x - SOUND_DESK.x, a.z - SOUND_DESK.z) < CONFIG.baile.radius && Math.abs(a.y - STAGE.h) < 1.6;
+  G.nearDesk = nearDesk;
+  function toggleBaile(a) { if (G.t < G.baile.cd) return; G.baile.on = !G.baile.on; G.baile.t0 = G.t; G.baile.by = a.id; G.baile.cd = G.t + CONFIG.baile.cooldown; emit({ type: 'baile', on: G.baile.on, t0: G.baile.t0, id: a.id }); }
   G.grenades = []; let gid = 1;
   function throwGrenade(a) {
     const C = CONFIG.grenade; if (!a.alive || (a.gren || 0) <= 0 || a.grenCd > 0 || a.reloadT > 0) return false;
@@ -384,6 +390,7 @@ function makeGame(map, W, opts) {
     const I = a.in;
     if (I.swap) { swap(a); I.swap = false; }
     if (I.gren) { throwGrenade(a); I.gren = false; }
+    if (I.use && !a.usePrev && !a.ai && nearDesk(a)) toggleBaile(a); a.usePrev = I.use;
     if (I.reload) { startReload(a); I.reload = false; }
     const w = a.ammo[a.cur], wc = W_(a.cur);
     if (w.mag === 0 && w.res > 0 && a.reloadT <= 0 && a.swapT <= 0 && I.fire) startReload(a);

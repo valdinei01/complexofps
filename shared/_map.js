@@ -38,6 +38,7 @@ const CLEAR = { // clareiras e praças: centro (m), raios (m), altura do piso
 };
 const QUADRA = { x: 205.5, z: 65.25, hx: 13, hz: 8, h: 0.8 };   // Quadra do Baile (piso 26 x 16 m)
 const STAGE = { x: 205.5, z: 77.2, hx: 5, hz: 2.2, h: 1.7 };     // palco ao norte da quadra
+const SOUND_DESK = { x: 205.5, z: 76.2 };                        // mesa de som do baile (em cima do palco)
 // Malha organizada de ruas (em metros). Regra: toda rua e todo beco terminam em outra rua, numa praça ou na mata —
 // não existe beco sem saída (há um teste automático que confere isso).
 const SEG = (name, kind, hw, pts) => ({ name, kind, hw, pts });
@@ -165,6 +166,10 @@ function buildMap(seed) {
   { const isLot = c => K[c] === K_LOT, isRoad = c => K[c] === K_STREET || K[c] === K_BECO || K[c] === K_PLAZA || K[c] === K_WALK;
     const cand = []; for (let j = 4; j < GZ - 4; j += 3) for (let i = 4; i < GX - 4; i += 3) if (isLot(idx(i, j))) cand.push([i, j]);
     const RR = mulberry(seed + 555); for (let k = cand.length - 1; k > 0; k--) { const q = Math.floor(RR() * (k + 1)); const t = cand[k]; cand[k] = cand[q]; cand[q] = t; }
+    // prioriza os lugares mais frequentados (praça, entrada do escadão, quadra, Base C, ruas principais) para as construções 3D aparecerem bem
+    const POI = [CLEAR.praca.c, [54, 46], [QUADRA.x, QUADRA.z], CLEAR.C.c, [24, 26], [190, 10], [230, 46], [88, 30], [27, 90]];
+    const score = ([i, j]) => { const x = i * CELL, z = j * CELL; let d = 1e9; for (const q of POI) d = Math.min(d, Math.hypot(q[0] - x, q[1] - z)); return d + RR() * 18; };
+    const sc = new Map(cand.map(c => [c, score(c)])); cand.sort((a, b) => sc.get(a) - sc.get(b));
     const order = []; for (const D of MODEL_DEFS) for (let n = 0; n < MODEL_COUNT[D.name]; n++) order.push(D);
     for (const D of order) {
       let done = false;

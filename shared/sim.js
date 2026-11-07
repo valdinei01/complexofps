@@ -43,6 +43,7 @@ const CLEAR = { // clareiras e praças: centro (m), raios (m), altura do piso
 };
 const QUADRA = { x: 205.5, z: 65.25, hx: 13, hz: 8, h: 0.8 };   // Quadra do Baile (piso 26 x 16 m)
 const STAGE = { x: 205.5, z: 77.2, hx: 5, hz: 2.2, h: 1.7 };     // palco ao norte da quadra
+const SOUND_DESK = { x: 205.5, z: 76.2 };                        // mesa de som do baile (em cima do palco)
 // Malha organizada de ruas (em metros). Regra: toda rua e todo beco terminam em outra rua, numa praça ou na mata —
 // não existe beco sem saída (há um teste automático que confere isso).
 const SEG = (name, kind, hw, pts) => ({ name, kind, hw, pts });
@@ -170,6 +171,10 @@ function buildMap(seed) {
   { const isLot = c => K[c] === K_LOT, isRoad = c => K[c] === K_STREET || K[c] === K_BECO || K[c] === K_PLAZA || K[c] === K_WALK;
     const cand = []; for (let j = 4; j < GZ - 4; j += 3) for (let i = 4; i < GX - 4; i += 3) if (isLot(idx(i, j))) cand.push([i, j]);
     const RR = mulberry(seed + 555); for (let k = cand.length - 1; k > 0; k--) { const q = Math.floor(RR() * (k + 1)); const t = cand[k]; cand[k] = cand[q]; cand[q] = t; }
+    // prioriza os lugares mais frequentados (praça, entrada do escadão, quadra, Base C, ruas principais) para as construções 3D aparecerem bem
+    const POI = [CLEAR.praca.c, [54, 46], [QUADRA.x, QUADRA.z], CLEAR.C.c, [24, 26], [190, 10], [230, 46], [88, 30], [27, 90]];
+    const score = ([i, j]) => { const x = i * CELL, z = j * CELL; let d = 1e9; for (const q of POI) d = Math.min(d, Math.hypot(q[0] - x, q[1] - z)); return d + RR() * 18; };
+    const sc = new Map(cand.map(c => [c, score(c)])); cand.sort((a, b) => sc.get(a) - sc.get(b));
     const order = []; for (const D of MODEL_DEFS) for (let n = 0; n < MODEL_COUNT[D.name]; n++) order.push(D);
     for (const D of order) {
       let done = false;
@@ -444,6 +449,7 @@ const CONFIG = {
   npcRespawn: 25,
   refill: { time: 3, radius: 2.6, cooldown: 5 },
   grenade: { start: 2, max: 2, fuse: 2.6, radius: 6.5, damage: 115, speed: 15, cooldown: 1.2 }, // granadas: quantidade e efeito em área
+  baile: { radius: 2.8, cooldown: 2 },   // caixa de som do baile: liga/desliga perto da mesa de som
   dayLength: 20 * 60,    // ciclo completo de dia e noite (segundos reais)
   dayStart: 0.3,         // hora inicial (0 = meia-noite, 0.25 = 6h, 0.5 = meio-dia, 0.75 = 18h)
   weapons: {
@@ -618,6 +624,11 @@ function makeGame(map, W, opts) {
     if (a.refillT >= CONFIG.refill.time) { a.ammo = loadout(); a.gren = Math.max(a.gren || 0, CONFIG.grenade.max); a.refillT = 0; a.refillCd = CONFIG.refill.cooldown; a.reloadT = 0; emit({ type: 'refill', id: a.id }); }
   }
   // ---------- granadas (o servidor valida estoque e calcula a explosão) ----------
+  // ---------- som do baile (estado no servidor: todos ouvem a mesma música no mesmo ponto) ----------
+  G.baile = { on: false, t0: 0, by: 0, cd: 0 };
+  const nearDesk = a => a.alive && Math.hypot(a.x - SOUND_DESK.x, a.z - SOUND_DESK.z) < CONFIG.baile.radius && Math.abs(a.y - STAGE.h) < 1.6;
+  G.nearDesk = nearDesk;
+  function toggleBaile(a) { if (G.t < G.baile.cd) return; G.baile.on = !G.baile.on; G.baile.t0 = G.t; G.baile.by = a.id; G.baile.cd = G.t + CONFIG.baile.cooldown; emit({ type: 'baile', on: G.baile.on, t0: G.baile.t0, id: a.id }); }
   G.grenades = []; let gid = 1;
   function throwGrenade(a) {
     const C = CONFIG.grenade; if (!a.alive || (a.gren || 0) <= 0 || a.grenCd > 0 || a.reloadT > 0) return false;
@@ -817,6 +828,7 @@ function makeGame(map, W, opts) {
     const I = a.in;
     if (I.swap) { swap(a); I.swap = false; }
     if (I.gren) { throwGrenade(a); I.gren = false; }
+    if (I.use && !a.usePrev && !a.ai && nearDesk(a)) toggleBaile(a); a.usePrev = I.use;
     if (I.reload) { startReload(a); I.reload = false; }
     const w = a.ammo[a.cur], wc = W_(a.cur);
     if (w.mag === 0 && w.res > 0 && a.reloadT <= 0 && a.swapT <= 0 && I.fire) startReload(a);
@@ -852,7 +864,7 @@ function makeGame(map, W, opts) {
 
 const API = { CONFIG, TEAM, BOT_NAMES, DIFF_FPS, CELL, GX, GZ, NC, MW, ML, K_VOID, K_AVE, K_WALK, K_STREET, K_ESC, K_BECO, K_ROOF, K_BLOCK, K_PLAZA, WALKABLE,
   B_MURO, B_TANK, B_GUARD, B_WALL, B_INVIS, B_TANK2, B_SAND, B_JERSEY, B_BRICKS, B_BARREL, B_SUPPLY, B_ROCK, B_FENCE, B_MODEL, MODEL_DEFS, K_TRAIL, K_MATA, STEP_UP,
-  CLEAR, QUADRA, STAGE, ESC, AVE_PTS, CANAL_PTS, BOTTOM_ROAD, BRIDGES, POLY_LEFT, POLY_RIGHT, TRAILS, polySide, polyDist, inPoly, escAt, ellR, CAN_HW, CAN_WALL, BANK_W,
+  CLEAR, QUADRA, STAGE, SOUND_DESK, ESC, AVE_PTS, CANAL_PTS, BOTTOM_ROAD, BRIDGES, POLY_LEFT, POLY_RIGHT, TRAILS, polySide, polyDist, inPoly, escAt, ellR, CAN_HW, CAN_WALL, BANK_W,
   buildMap, makeWorld, makeGame, terrain, aveX, foldZ, mulberry, h2, clamp, sm, lerp, angDiff, STREETS, SUPPLY, PRACA, CANAL_ST, WALK_X0, WALK_X1, WALK_H, STATION, MID, AVE_HW, SIDEW, LANE_X, PARK_X, ESC_HW, ESC_X0, ESC_X1, BASEZ, WATER_X1, aveEast,
   get ESC_LAND() { return ESC_LAND; } };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.EscSim = API;
