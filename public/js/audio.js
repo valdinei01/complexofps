@@ -37,6 +37,26 @@ function makeAudio() {
     ambActive.push({ s: s2, g, start: now, end: now + b.duration / s2.playbackRate.value }); return true;
   }
   function ambientFade() { if (!ctx) return; const now = ctx.currentTime; for (const v of ambActive) { if (v.fading) continue; v.fading = true; try { v.g.gain.cancelScheduledValues(now); v.g.gain.setValueAtTime(v.g.gain.value, now); v.g.gain.linearRampToValueAtTime(0.0001, now + 1.5); v.s.stop(now + 1.6); } catch (e) {} } }
+  // ---- música do baile: toca em loop a partir do palco; volume cai até zero a ~38 m (só escuta quem chega perto) ----
+  let baileBuf = null, baileSrc = '', baileNode = null;
+  function loadBaile(url) { baileSrc = url; if (ctx) decodeBaile(); }
+  function decodeBaile() { if (!ctx || baileBuf || !baileSrc) return; const go = ab => { let ok = false; const fin = b => { if (b && !ok) { ok = true; baileBuf = b; } }; try { const p = ctx.decodeAudioData(ab, fin, () => {}); if (p && p.then) p.then(fin).catch(() => {}); } catch (e) {} };
+    if (baileSrc.startsWith('data:')) { const bin = atob(baileSrc.split(',')[1]), u8 = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) u8[k] = bin.charCodeAt(k); go(u8.buffer); } else fetch(baileSrc).then(r => r.arrayBuffer()).then(go).catch(() => {}); }
+  function baile(on, offset, x, y, z) {
+    if (!ensure()) return false; decodeBaile();
+    if (!on) { if (baileNode) { const n = baileNode; baileNode = null; try { n.g.gain.setTargetAtTime(0, ctx.currentTime, 0.15); n.s.stop(ctx.currentTime + 0.8); } catch (e) {} } return true; }
+    if (baileNode || !baileBuf) return !!baileNode;
+    const s2 = ctx.createBufferSource(); s2.buffer = baileBuf; s2.loop = true; const g = ctx.createGain(); g.gain.value = 0.9;
+    const p = ctx.createPanner(); p.panningModel = 'equalpower'; p.distanceModel = 'linear'; p.refDistance = 5; p.maxDistance = 38; p.rolloffFactor = 1; setPos(p, x, y, z);
+    s2.connect(g); g.connect(p); p.connect(master); s2.start(ctx.currentTime, ((offset % baileBuf.duration) + baileBuf.duration) % baileBuf.duration); baileNode = { s: s2, g, p }; return true;
+  }
+  // ---- voz de outro jogador: fluxo WebRTC -> volume pela distância -> posição 3D ----
+  function voiceNode(stream) {
+    if (!ensure()) return null; const src = ctx.createMediaStreamSource(stream), g = ctx.createGain(), an = ctx.createAnalyser(), p = ctx.createPanner();
+    g.gain.value = 0; an.fftSize = 256; p.panningModel = 'equalpower'; p.distanceModel = 'linear'; p.refDistance = 1; p.maxDistance = 1e4; p.rolloffFactor = 0;
+    src.connect(an); src.connect(g); g.connect(p); p.connect(master); const buf = new Uint8Array(an.fftSize);
+    return { setPos(x, y, z) { setPos(p, x, y, z); }, setGain(v) { g.gain.setTargetAtTime(v, ctx.currentTime, 0.08); }, level() { an.getByteTimeDomainData(buf); let m = 0; for (const v of buf) m = Math.max(m, Math.abs(v - 128)); return m / 128; }, close() { try { src.disconnect(); g.disconnect(); p.disconnect(); } catch (e) {} } };
+  }
   function load(urls) { Object.assign(src, urls); if (ctx) for (const k in urls) decode(k); }
   const getNoise = () => { if (noise) return noise; const b = ctx.createBuffer(1, ctx.sampleRate * 0.6, ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return noise = b; };
   function setListener(x, y, z, yaw, pitch) { if (![...arguments].every(v => typeof v !== 'number' || Number.isFinite(v))) return;
@@ -44,6 +64,7 @@ function makeAudio() {
     if (L.positionX) { const t = ctx.currentTime; L.positionX.setValueAtTime(x, t); L.positionY.setValueAtTime(y, t); L.positionZ.setValueAtTime(z, t); L.forwardX.setValueAtTime(fx, t); L.forwardY.setValueAtTime(fy, t); L.forwardZ.setValueAtTime(fz, t); L.upX.setValueAtTime(0, t); L.upY.setValueAtTime(1, t); L.upZ.setValueAtTime(0, t); }
     else { L.setPosition(x, y, z); L.setOrientation(fx, fy, fz, 0, 1, 0); }
   }
+  function setPos(p, x, y, z) { if (![x, y, z].every(Number.isFinite)) return; if (p.positionX) { p.positionX.value = x; p.positionY.value = y; p.positionZ.value = z; } else p.setPosition(x, y, z); }
   function panner(x, y, z) {
     const p = ctx.createPanner(); p.panningModel = mobile ? 'equalpower' : 'HRTF'; p.distanceModel = 'inverse'; p.refDistance = 5; p.rolloffFactor = 0.9; p.maxDistance = 400;
     if (p.positionX) { p.positionX.value = x; p.positionY.value = y; p.positionZ.value = z; } else p.setPosition(x, y, z); return p;
@@ -82,7 +103,7 @@ function makeAudio() {
     const o = ctx.createOscillator(), og = ctx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(90, now); o.frequency.exponentialRampToValueAtTime(32, now + 0.5); og.gain.setValueAtTime(vol * 0.9, now); og.gain.exponentialRampToValueAtTime(0.001, now + 0.6); o.connect(og); og.connect(p); o.start(now); o.stop(now + 0.65);
   }
   function setVolume(v) { volume = v; if (master && !muted) master.gain.value = v; }
-  return { ensure, load, loadAmbient, ambient, ambientFade, setListener, shot, whizz, boom, blip, thud, step, setVolume, setMuted(m) { muted = m; if (master) master.gain.value = m ? 0 : volume; }, get muted() { return muted; }, get ready() { return !!(buf.rifle && buf.pistol); }, get voices() { return voices.length; }, close() { if (ctx && ctx.close) ctx.close(); ctx = null; } };
+  return { get baileOn() { return !!baileNode; }, get baileReady() { return !!baileBuf; }, ensure, load, loadBaile, baile, voiceNode, loadAmbient, ambient, ambientFade, setListener, shot, whizz, boom, blip, thud, step, setVolume, setMuted(m) { muted = m; if (master) master.gain.value = m ? 0 : volume; }, get muted() { return muted; }, get ready() { return !!(buf.rifle && buf.pistol); }, get voices() { return voices.length; }, close() { if (ctx && ctx.close) ctx.close(); ctx = null; } };
 }
 window.EscAudio = makeAudio;
 })();

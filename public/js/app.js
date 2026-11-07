@@ -4,7 +4,7 @@
 const S = window.EscSim, P = window.EscPlay, HUD = window.EscHUD;
 const $ = (q, el) => (el || document).querySelector(q);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 const store = { get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 const cfg = P.cfg = Object.assign({ name: '', quality: 'medio', sens: 1, volume: 0.8, diff: 'normal', team: 0, showFps: false, opTop: 0.65, opCtl: 0.6, muted: false, aimAssist: true }, store.get('escadao3d-cfg', {}));
 const saveCfg = () => store.set('escadao3d-cfg', cfg);
@@ -19,7 +19,9 @@ window.EscApp = app;
 const root = $('#app'), glc = $('#gl'), hud = $('#hud'), ui = $('#ui'), touchLayer = $('#touch');
 const hctx = hud.getContext('2d');
 P.audio = window.EscAudio(); P.audio.setVolume(cfg.volume); P.audio.setMuted(!!cfg.muted);
+P.voice = window.EscVoice ? window.EscVoice.create(P) : null;
 P.audio.load({ rifle: window.ESC_AUDIO ? window.ESC_AUDIO.rifle : '/audio/fuzil.mp3', pistol: window.ESC_AUDIO ? window.ESC_AUDIO.pistol : '/audio/pistola.mp3' });
+P.audio.loadBaile(window.ESC_AUDIO && window.ESC_AUDIO.baile ? window.ESC_AUDIO.baile : '/audio/baile.mp3');
 P.audio.loadAmbient(window.ESC_AUDIO && window.ESC_AUDIO.amb ? window.ESC_AUDIO.amb : [1, 2, 3, 4].map(k => '/audio/ambiente/tiroteio_' + k + '.mp3'));
 const portrait = () => root.clientHeight > root.clientWidth;
 // margens de segurança do aparelho (entalhe, barra de gestos), lidas do CSS env()
@@ -94,6 +96,11 @@ function newsScreen() {
   app.screen = 'news';
   show(`<div class="panel">${back()}<h2>Novidades</h2><div class="news">
     <h4>Versão ${VERSION}</h4><ul>
+    <li><b>Som do baile</b>: suba no palco da Quadra do Baile e use a mesa de som (E ou INTERAGIR) para ligar ou desligar a música. Ela só é ouvida de perto, e todos na sala escutam o mesmo trecho.</li>
+    <li><b>Chat de voz por proximidade</b> nas salas online: ligue o microfone no botão ao lado do som. Quem estiver a até ~28 m ouve você, mais alto quanto mais perto; um ícone mostra quem está falando.</li>
+    <li>Construções 3D posicionadas perto da Praça, da Quadra, da Base C e das ruas principais, e um pouco mais claras.</li>
+    <li>Janelas de diálogo agora rolam em telas pequenas (celular deitado).</li></ul>
+    <h4>Versão 2.4.0</h4><ul>
     <li><b>Relevo de volta, suave e moderado</b>: morros arredondados (no máximo ~5 m), chão contínuo sem degraus em bloco e texturas de chão mais lisas.</li>
     <li><b>Mais construções 3D</b>: os seis modelos enviados agora substituem cerca de 45 casas geradas, com três níveis de detalhe.</li>
     <li><b>Som ambiente de tiroteio</b>: quando outros jogadores trocam tiros perto de você, as gravações completas de tiroteio tocam na direção do confronto.</li>
@@ -249,8 +256,8 @@ function startOnline(d) {
   if (!ensure3D()) return; if (P.sess) P.endSession(); show(''); app.screen = 'game';
   P.startSession({ mode: 'online', socket: app.socket, start: d }, { onEnd: showResult }); enterGame();
 }
-function enterGame() { root.classList.add('ingame'); touchLayer.style.display = touch ? 'block' : 'none'; app.screen = 'game'; layoutTouch(); if (!touch) lockPointer(); P.audio.ensure(); }
-function endGame() { P.endSession(); root.classList.remove('ingame'); touchLayer.style.display = 'none'; topBtns.style.display = 'none'; if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock(); hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, hud.width, hud.height); }
+function enterGame() { root.classList.add('ingame'); touchLayer.style.display = touch ? 'block' : 'none'; app.screen = 'game'; layoutTouch(); if (!touch) lockPointer(); P.audio.ensure(); if (P.voice && P.sess && P.sess.mode === 'online') P.voice.start(P.sess, app.socket); }
+function endGame() { if (P.voice) P.voice.stop(); if (P.audio) P.audio.baile(false); P.endSession(); root.classList.remove('ingame'); touchLayer.style.display = 'none'; topBtns.style.display = 'none'; if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock(); hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, hud.width, hud.height); }
 function pauseScreen() {
   const s = P.sess; if (!s) return; s.paused = s.mode === 'offline'; app.screen = 'pause'; topBtns.style.display = 'none'; releaseInput(); if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock();
   show(`<div class="panel"><h2>Pausa</h2>${s.mode === 'online' ? '<p class="note">A partida online continua enquanto este menu está aberto.</p>' : ''}
@@ -306,20 +313,24 @@ const IC = {
   use: SVG('<path d="M8 11V5a1.5 1.5 0 013 0v5h.5V3.5a1.5 1.5 0 013 0V10h.5V5a1.5 1.5 0 013 0v8c0 4-2.5 7-6 7-2.5 0-4-1.2-5.4-3.3L4.5 13a1.6 1.6 0 012.6-1.8z" fill="#fff"/>'),
   pause: SVG('<rect x="6" y="5" width="4" height="14" rx="1" fill="#fff"/><rect x="14" y="5" width="4" height="14" rx="1" fill="#fff"/>'),
   sound: SVG('<path d="M4 9h4l5-4v14l-5-4H4z" fill="#fff"/><path d="M16 8.5a5 5 0 010 7M18.5 6a8.5 8.5 0 010 12" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'),
+  mic: SVG('<rect x="9" y="3" width="6" height="11" rx="3" fill="#fff"/><path d="M6 11a6 6 0 0012 0M12 17v4M9 21h6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'),
+  micOff: SVG('<rect x="9" y="3" width="6" height="11" rx="3" fill="#fff" opacity=".55"/><path d="M6 11a6 6 0 0012 0M12 17v4M9 21h6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".55"/><path d="M4 4l16 16" stroke="#FF4A3A" stroke-width="2.4" stroke-linecap="round"/>'),
   mute: SVG('<path d="M4 9h4l5-4v14l-5-4H4z" fill="#fff"/><path d="M16 9l5 6M21 9l-5 6" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'),
 };
 const BTN = ['fire', 'gren', 'aim', 'reload', 'crouch', 'sprint', 'jump', 'swap', 'use'];
 touchLayer.innerHTML = `<div class="joy" data-b="joy"><div class="knob"></div></div>` + BTN.map(b => `<div class="tb tb-${b}" data-b="${b}" role="button" aria-label="${b}">${IC[b]}${b === 'gren' ? '<span class="badge">2</span>' : ''}${b === 'use' ? '<span class="lbl">REABASTECER</span>' : ''}</div>`).join('');
 // pausa e som ficam visíveis também no computador
-const topBtns = document.createElement('div'); topBtns.id = 'topbtns'; topBtns.innerHTML = `<button class="tb tb-pause" data-b="pause" aria-label="Pausar">${IC.pause}</button><button class="tb tb-sound" data-b="sound" aria-label="Som">${cfg.muted ? IC.mute : IC.sound}</button>`; root.appendChild(topBtns);
+const topBtns = document.createElement('div'); topBtns.id = 'topbtns'; topBtns.innerHTML = `<button class="tb tb-pause" data-b="pause" aria-label="Pausar">${IC.pause}</button><button class="tb tb-sound" data-b="sound" aria-label="Som">${cfg.muted ? IC.mute : IC.sound}</button><button class="tb tb-mic" data-b="mic" aria-label="Microfone">${IC.micOff}</button>`; root.appendChild(topBtns);
 const TEL = {}; touchLayer.querySelectorAll('[data-b]').forEach(el => TEL[el.dataset.b] = el); topBtns.querySelectorAll('[data-b]').forEach(el => TEL[el.dataset.b] = el);
 TEL.pause.addEventListener('click', () => { if (playing()) pauseScreen(); });
+TEL.mic.addEventListener('click', async () => { if (!P.sess || P.sess.mode !== 'online') { toast('O chat de voz funciona nas salas online.', true); return; } if (!P.voice) return;
+  const r = await P.voice.toggleMic(); if (r.error) { toast(r.error, true); return; } TEL.mic.innerHTML = r.on ? IC.mic : IC.micOff; TEL.mic.classList.toggle('on', r.on); toast(r.on ? 'Microfone ligado: quem estiver perto ouve você.' : 'Microfone desligado.'); });
 TEL.sound.addEventListener('click', () => { cfg.muted = !cfg.muted; P.audio.setMuted(cfg.muted); saveCfg(); TEL.sound.innerHTML = cfg.muted ? IC.mute : IC.sound; });
 const elemRect = id => { const v = app.view; return HUD.place(app.layout, id, v.area); };
 function layoutTouch() { const L = app.layout, v = app.view; if (!v || !L) return;
   document.documentElement.style.setProperty('--ctl-bg', `rgba(14,14,16,${cfg.opCtl})`); document.documentElement.style.setProperty('--top-bg', `rgba(14,14,16,${cfg.opTop})`);
   const put = k => { const el = TEL[k]; if (!el || !L[k]) return; const r = elemRect(k), sz = Math.round(r.w); el.style.width = sz + 'px'; el.style.height = Math.round(r.h) + 'px'; el.style.left = Math.round(r.cx - r.w / 2) + 'px'; el.style.top = Math.round(r.cy - r.h / 2) + 'px'; el.style.opacity = L[k].a; };
-  put('joy'); for (const b of BTN) put(b); put('pause'); put('sound'); topBtns.style.display = P.sess && app.screen === 'game' || app.editing ? '' : 'none'; }
+  put('joy'); for (const b of BTN) put(b); put('pause'); put('sound'); put('mic'); if (TEL.mic) TEL.mic.style.display = P.sess && P.sess.mode === 'online' || app.editing ? '' : 'none'; topBtns.style.display = P.sess && app.screen === 'game' || app.editing ? '' : 'none'; }
 const T = new Map();
 const hitBtn = (x, y) => { let best = null; for (const k of ['joy', ...BTN]) { const el = TEL[k]; if (!el || el.style.display === 'none' || el.classList.contains('off')) continue; const r = el.getBoundingClientRect(), pad = k === 'joy' ? 30 : 6; if (x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad) { const a = r.width * r.height; if (!best || a < best.a) best = { k, a }; } } return best && best.k; };
 touchLayer.addEventListener('touchstart', e => { e.preventDefault(); if (!playing()) return; const I = P.sess.input;
@@ -340,7 +351,7 @@ const tend = e => { if (!P.sess) return; const I = P.sess.input; for (const t of
 touchLayer.addEventListener('touchend', tend); touchLayer.addEventListener('touchcancel', tend);
 // atualiza contador de granadas e botão contextual de interação
 function updateTouchState() { const s = P.sess; if (!s) return; const me = s.me, b = TEL.gren.querySelector('.badge'), n = String(me.gren == null ? 0 : me.gren); if (b.textContent !== n) b.textContent = n; TEL.gren.classList.toggle('empty', !+n);
-  const near = !!s.nearStation; if (TEL.use.dataset.v !== String(near)) { TEL.use.dataset.v = String(near); TEL.use.style.display = near || app.editing ? '' : 'none'; } }
+  const near = !!(s.nearStation || s.nearDesk), lbl = s.nearDesk ? 'SOM DO BAILE' : 'REABASTECER'; const ul = TEL.use.querySelector('.lbl'); if (ul && ul.textContent !== lbl) ul.textContent = lbl; if (TEL.use.dataset.v !== String(near)) { TEL.use.dataset.v = String(near); TEL.use.style.display = near || app.editing ? '' : 'none'; } }
 
 // ---------------- editor de HUD ----------------
 // Modo exclusivo: mostra os controles reais, seleciona o elemento menor sob o dedo (sem pegar o vizinho),

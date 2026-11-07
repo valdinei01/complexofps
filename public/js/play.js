@@ -29,7 +29,7 @@ P.initRenderer = function (canvas) {
   const decalGeo = new RND.Geo(true); for (const d of Wg.decals) { const l = Wg.lit([1, 1, 1], d.n[0], d.n[1], d.n[2], 1, 1).map(v => Math.min(1.05, v * 1.05)); decalGeo.quad(d.p, d.uv, 0, [l, l, l, l]); }
   R.upload(Wg.geo, decalGeo, Wg.lines, RND.makeAtlas(), RND.makeDecals('"Bungee","Arial Black",Impact,sans-serif'));
   P.R = R; P.Wg = Wg;
-  if (window.EscModels) { const src = {}; for (const n of window.EscModels.list) src[n] = window.ESC_MODELS && window.ESC_MODELS[n] ? window.ESC_MODELS[n] : { bin: '/models/' + n + '.bin', jpg: '/models/' + n + '.jpg' }; try { P.models = window.EscModels.create(R, src, map); } catch (e) { console.warn('construções 3D indisponíveis:', e); } }
+  if (window.EscModels) { const src = {}; for (const n of window.EscModels.list) src[n] = window.ESC_MODELS && window.ESC_MODELS[n] ? window.ESC_MODELS[n] : { bin: '/models/' + n + '.bin?v=251', jpg: '/models/' + n + '.jpg?v=251' }; try { P.models = window.EscModels.create(R, src, map); } catch (e) { console.warn('construções 3D indisponíveis:', e); } }
   return R;
 };
 // hora do dia => luz do cenário (no menu: fim de tarde)
@@ -73,9 +73,10 @@ function onSnap(s, d) {
   if (d.c && s.cars) d.c.forEach((c, i) => { const car = s.cars[i]; if (!car) return; car.ts = c[0]; car.spd = c[1]; });
   if (d.gr) s.grenades = d.gr.map(g => ({ id: g[0], x: g[1], y: g[2], z: g[3] }));
   if (d.dn != null) s.dayT = d.dn;
+  if (d.bl) s.baile = { on: !!d.bl[0], t0: d.bl[1] }; s.serverT = d.t; s.serverAt = performance.now();
   d.b.forEach((b, i) => { const v = s.basesView[i]; v.owner = b[0]; v.prog = b[1]; v.state = b[2]; v.inside = [b[3], b[4]]; });
   const me = s.me, m = d.me; if (m) {
-    const wasAlive = me.alive; me.hp = m.hp; me.alive = m.alive; me.respawnT = m.rt; me.cur = m.cur; me.ammo.rifle.mag = m.am[0]; me.ammo.rifle.res = m.am[1]; me.ammo.pistol.mag = m.am[2]; me.ammo.pistol.res = m.am[3]; me.reloadT = m.rl; me.swapT = m.sw; me.refillT = m.rf; me.refillCd = m.rfc; me.near = m.near; me.invuln = m.inv ? 1 : 0; me.gren = m.gn;
+    const wasAlive = me.alive; me.hp = m.hp; me.alive = m.alive; me.respawnT = m.rt; me.cur = m.cur; me.ammo.rifle.mag = m.am[0]; me.ammo.rifle.res = m.am[1]; me.ammo.pistol.mag = m.am[2]; me.ammo.pistol.res = m.am[3]; me.reloadT = m.rl; me.swapT = m.sw; me.refillT = m.rf; me.refillCd = m.rfc; me.near = m.near; me.desk = !!m.desk; me.invuln = m.inv ? 1 : 0; me.gren = m.gn;
     if (m.pos && (m.cor || !wasAlive || !me.placed)) { me.x = m.pos[0]; me.y = m.pos[1]; me.z = m.pos[2]; me.vy = 0; me.placed = true; if (!wasAlive && m.alive) { me.yaw = me.team ? Math.PI : 0; me.pitch = 0; s.cam = null; } }
   }
   for (const e of d.ev) handleEvent(s, e);
@@ -185,8 +186,16 @@ P.frame = function (dt, view) {
   for (const f of s.feed) f.t -= dt; s.feed = s.feed.filter(f => f.t > 0);
   s.dmgDirs = s.dmgDirs.filter(d => (d.t -= dt * 0.9) > 0); s.hitT = Math.max(0, s.hitT - dt); s.recoil = Math.max(0, s.recoil - dt * 9);
   battleAmbience(s); if (!s.paused && !s.over && !s.editing) aimAssist(s, dt);
+  baileSound(s); if (s.mode === 'online' && P.voice) P.voice.update();
+  s.nearDesk = !!(me.alive && (s.mode === 'offline' ? s.G.nearDesk(me) : me.desk));
   render(s, dt, view);
 };
+// música do baile: toca a partir do palco quando alguém liga a caixa de som (todos ouvem o mesmo trecho)
+function baileSound(s) {
+  const A = P.audio; if (!A) return; const b = s.mode === 'offline' ? s.G.baile : s.baile; const on = !!(b && b.on);
+  if (on === !!s.baileOn) return; const now = s.mode === 'offline' ? s.G.t : (s.serverT || 0) + (performance.now() - (s.serverAt || performance.now())) / 1000;
+  if (A.baile(on, now - (b ? b.t0 : 0), S.STAGE.x, S.STAGE.h + 2, S.STAGE.z + 1) || !on) s.baileOn = on;
+}
 // som ambiente de tiroteio: quando outros jogadores trocam tiros por perto, toca as gravações longas na direção do confronto
 function battleAmbience(s) {
   const A = P.audio, now = performance.now(); if (!A || !s.battle) return; s.battle = s.battle.filter(b => now - b.t < 3500);
@@ -224,7 +233,7 @@ P.renderScene = function (cam, aspect, extra) {
 function render(s, dt, view) {
   const R = P.R, me = s.me, cam = camera(s, dt), aspect = R.canvas.width / R.canvas.height;
   const aiming = !!(s.input.aim && me.alive && me.reloadT <= 0); s.cam.aim += ((aiming ? 1 : 0) - s.cam.aim) * Math.min(1, dt * 12);
-  cam.fov = (P.touch ? 80 : 74) - s.cam.aim * 24;
+  cam.fov = P.forceFov || (P.touch ? 80 : 74) - s.cam.aim * 24;
   const others = s.mode === 'offline' ? s.G.actors.filter(a => a !== me).concat(s.G.npcs) : viewActors(s);
   for (const a of others) { a.anim = (a.anim || 0) + dt * (a.spd || 0) * 2.2; if (!a.alive) a.deathT = (a.deathT || 0) + (s.mode === 'online' && !a.npc ? dt : 0); a.hurtT = Math.max(0, (a.hurtT || 0) - (s.mode === 'online' ? dt : 0)); }
   const bases = s.mode === 'offline' ? s.G.bases : s.basesView;
@@ -303,6 +312,7 @@ function drawHud(s, view, bases, others) {
   const g = view.hctx, W = view.W, H = view.H, me = s.me, L = view.layout, A = view.area, op = view.op; g.setTransform(view.hs, 0, 0, view.hs, 0, 0);
   const markers = [];
   for (const a of others) { if (a.npc || !a.alive || a.team !== me.team) continue; const p = project(s.VP, a.x, a.y + 2.15, a.z, W, H); if (p) markers.push({ kind: 'ally', x: p[0], y: p[1], col: TEAM[a.team].css, label: Math.hypot(a.x - me.x, a.z - me.z) < 40 ? a.name : '' }); }
+  if (P.voice && s.mode === 'online') for (const a of others) { if (a.npc || !a.alive || !P.voice.isTalking(a.id)) continue; const p = project(s.VP, a.x, a.y + 2.5, a.z, W, H); if (p) markers.push({ kind: 'talk', x: p[0], y: p[1] }); }
   for (const b of bases) { const p = project(s.VP, b.x, b.h + 6, b.z, W, H); if (p && p[0] > 10 && p[0] < W - 10 && p[1] > 10 && p[1] < H - 10) { const d = Math.hypot(b.x - me.x, b.z - me.z); markers.push({ kind: 'base', x: p[0], y: p[1], col: HUD.BASE_COL(b.owner), label: b.id, dist: d > 6 ? Math.round(d) + ' m' : '' }); } }
   const st0 = S.STATION(me.team), sy = P.world.map.H[P.world.W.nearestOK(st0.x, st0.z, 4)], sp = project(s.VP, st0.x, sy + 2.6, st0.z, W, H); if (sp && Math.hypot(st0.x - me.x, st0.z - me.z) < 70) markers.push({ kind: 'supply', x: sp[0], y: sp[1] });
   for (const gr of (s.mode === 'offline' ? s.G.grenades : s.grenades || [])) { if (Math.hypot(gr.x - me.x, gr.z - me.z) > 9) continue; const p = project(s.VP, gr.x, gr.y + 0.4, gr.z, W, H); if (p) markers.push({ kind: 'gren', x: p[0], y: p[1] }); }
@@ -310,7 +320,8 @@ function drawHud(s, view, bases, others) {
   let center = null, capture = null;
   const total = me.ammo.rifle.mag + me.ammo.rifle.res + me.ammo.pistol.mag + me.ammo.pistol.res;
   const nearSt = s.mode === 'offline' ? s.G.nearStation(me) : me.near; s.nearStation = !!(me.alive && nearSt);
-  if (me.alive && nearSt) { const full = me.ammo.rifle.mag === 30 && me.ammo.rifle.res === CONFIG.weapons.rifle.res && me.ammo.pistol.mag === 15 && me.ammo.pistol.res === CONFIG.weapons.pistol.res && (me.gren || 0) >= CONFIG.grenade.max;
+  if (s.nearDesk && !nearSt) { const on = s.mode === 'offline' ? s.G.baile.on : s.baile && s.baile.on; center = { text: (P.touch ? 'Toque em SOM DO BAILE' : 'Aperte E') + (on ? ' — DESLIGAR o som do baile' : ' — LIGAR o som do baile'), col: '#C9A0FF' }; }
+  else if (me.alive && nearSt) { const full = me.ammo.rifle.mag === 30 && me.ammo.rifle.res === CONFIG.weapons.rifle.res && me.ammo.pistol.mag === 15 && me.ammo.pistol.res === CONFIG.weapons.pistol.res && (me.gren || 0) >= CONFIG.grenade.max;
     if (me.refillT > 0) center = { text: 'REABASTECENDO MUNIÇÃO', p: me.refillT / CONFIG.refill.time }; else if ((me.refillCd || 0) > 0) center = { text: 'Aguarde para reabastecer de novo', col: '#ddd' }; else if (!full) center = { text: (P.touch ? 'Segure INTERAGIR' : 'Segure E') + ' — REABASTECIMENTO DISPONÍVEL' }; else center = { text: 'Munição completa', col: '#ddd' }; }
   else if (me.alive && w.mag === 0 && w.res === 0) center = { text: total ? 'SEM MUNIÇÃO NO ' + wc.name + ' — troque de arma' : 'SEM MUNIÇÃO — RETORNE À BASE', col: '#FF8A6A' };
   else if (me.alive && me.reloadT > 0) center = { text: 'Recarregando', col: '#FFE7A8' };

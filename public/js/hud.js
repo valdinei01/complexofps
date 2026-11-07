@@ -33,9 +33,10 @@ function defaults(touch, portrait) {
       swap: { x: P ? 0.46 : 0.69, y: P ? 0.9 : 0.88, s: 0.85, a: 1, label: 'Trocar arma' },
       use: { x: P ? 0.5 : 0.62, y: P ? 0.74 : 0.62, s: 1, a: 1, label: 'Interagir' },
       sound: { x: P ? 0.31 : 0.15, y: P ? 0.06 : 0.09, s: 1, a: 1, label: 'Som' },
+      mic: { x: P ? 0.31 : 0.15, y: P ? 0.115 : 0.2, s: 1, a: 1, label: 'Microfone' },
       pause: { x: P ? 0.93 : 0.955, y: P ? 0.04 : 0.07, s: 1, a: 1, label: 'Pausa' },
     });
-  } else Object.assign(d, { sound: { x: 0.125, y: 0.05, s: 1, a: 1, label: 'Som' }, pause: { x: 0.97, y: 0.05, s: 1, a: 1, label: 'Pausa' } });
+  } else Object.assign(d, { sound: { x: 0.125, y: 0.05, s: 1, a: 1, label: 'Som' }, mic: { x: 0.125, y: 0.115, s: 1, a: 1, label: 'Microfone' }, pause: { x: 0.97, y: 0.05, s: 1, a: 1, label: 'Pausa' } });
   return d;
 }
 const keyFor = (touch, portrait) => KEY + (touch ? '-m' : '-d') + (portrait ? '-p' : '-l');
@@ -44,7 +45,7 @@ function load(touch, portrait) { const d = defaults(touch, portrait); try { cons
 function save(touch, portrait, L) { const o = {}; for (const k in L) o[k] = { x: L[k].x, y: L[k].y, s: L[k].s, a: L[k].a }; try { localStorage.setItem(keyFor(touch, portrait), JSON.stringify(o)); } catch (e) {} }
 function reset(touch, portrait) { try { localStorage.removeItem(keyFor(touch, portrait)); } catch (e) {} return defaults(touch, portrait); }
 // tamanhos base (px) de cada elemento — usados pelo HUD, pelos botões e pelo editor
-const SIZES = { score: [252, 34], radar: [92, 92], feed: [210, 60], alerts: [280, 34], health: [120, 22], ammo: [118, 30], joy: [128, 128], fire: [92, 92], gren: [52, 52], aim: [54, 54], reload: [54, 54], crouch: [54, 54], sprint: [54, 54], jump: [50, 50], swap: [46, 46], use: [58, 58], sound: [36, 36], pause: [38, 38] };
+const SIZES = { score: [252, 34], radar: [92, 92], feed: [210, 60], alerts: [280, 34], health: [120, 22], ammo: [118, 30], joy: [128, 128], fire: [92, 92], gren: [52, 52], aim: [54, 54], reload: [54, 54], crouch: [54, 54], sprint: [54, 54], jump: [50, 50], swap: [46, 46], use: [58, 58], sound: [36, 36], mic: [36, 36], pause: [38, 38] };
 const roundRect = (g, x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
 const BASE_COL = o => o === 0 ? '#3D8BFF' : o === 1 ? '#FF4A3A' : '#8E8E8E';
 // área útil: a tela menos as margens de segurança (entalhe, barra de gestos)
@@ -61,6 +62,7 @@ function draw(g, W, H, L, st, A, op) {
   for (const m of st.markers) { g.globalAlpha = m.a || 1; if (m.kind === 'ally') { g.fillStyle = m.col; g.beginPath(); g.moveTo(m.x - 5, m.y - 6); g.lineTo(m.x + 5, m.y - 6); g.lineTo(m.x, m.y); g.closePath(); g.fill(); if (m.label) { g.font = '600 10.5px Rubik, system-ui, sans-serif'; g.textAlign = 'center'; shadowText(m.label, m.x, m.y - 13); } }
     else if (m.kind === 'base') { g.fillStyle = `rgba(0,0,0,${0.4 * bgTop / 0.65})`; g.beginPath(); g.arc(m.x, m.y, 11, 0, 7); g.fill(); g.strokeStyle = m.col; g.lineWidth = 2.5; g.beginPath(); g.arc(m.x, m.y, 10, 0, 7); g.stroke(); g.font = '700 11px Rubik, sans-serif'; g.textAlign = 'center'; g.fillStyle = '#fff'; g.fillText(m.label, m.x, m.y + 1); if (m.dist) { g.font = '600 9.5px Rubik, system-ui, sans-serif'; shadowText(m.dist, m.x, m.y + 19); } }
     else if (m.kind === 'supply') { g.fillStyle = 'rgba(0,0,0,.4)'; roundRect(g, m.x - 10, m.y - 10, 20, 20, 5); g.fill(); g.strokeStyle = '#FFD24A'; g.lineWidth = 1.6; g.stroke(); g.fillStyle = '#FFD24A'; for (let k = -1; k <= 1; k++) g.fillRect(m.x + k * 5 - 1.2, m.y - 5, 2.4, 10); }
+    else if (m.kind === 'talk') { g.fillStyle = 'rgba(10,10,12,.7)'; g.beginPath(); g.arc(m.x, m.y, 9, 0, 7); g.fill(); g.fillStyle = '#7BE07B'; g.fillRect(m.x - 2.5, m.y - 6, 5, 8); g.strokeStyle = '#7BE07B'; g.lineWidth = 1.5; g.beginPath(); g.arc(m.x, m.y - 1, 4.5, 0.2, Math.PI - 0.2); g.stroke(); g.fillRect(m.x - 0.75, m.y + 3, 1.5, 3); }
     else if (m.kind === 'gren') { g.strokeStyle = 'rgba(255,90,60,.95)'; g.lineWidth = 2; g.beginPath(); g.arc(m.x, m.y, 9, 0, 7); g.stroke(); g.fillStyle = '#FF6A4A'; g.font = '700 11px Rubik, sans-serif'; g.textAlign = 'center'; g.fillText('!', m.x, m.y + 0.5); }
     g.globalAlpha = 1; }
   // placar compacto: AZUL 0% — (A)(B)(C) — VERM. 0%

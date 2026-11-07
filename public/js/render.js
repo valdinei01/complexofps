@@ -377,6 +377,7 @@ function buildDecor(map, W) {
     const St = STAGE; geo.box(St.x - St.hx, St.h, St.z + St.hz - 0.2, St.x + St.hx, St.h + 4, St.z + St.hz, T_ZINC, [0.18, 0.16, 0.22], 1);
     for (const sx of [-1, 1]) { geo.box(St.x + sx * St.hx - 0.15, St.h, St.z - St.hz, St.x + sx * St.hx + 0.15, St.h + 4.3, St.z - St.hz + 0.3, T_ZINC, METAL, 1); geo.box(St.x + sx * (St.hx - 1) - 0.6, St.h, St.z + 0.6, St.x + sx * (St.hx - 1) + 0.6, St.h + 1.8, St.z + 1.6, T_ZINC, [0.12, 0.12, 0.13], 1); }
     geo.box(St.x - St.hx - 0.2, St.h + 4.2, St.z - St.hz - 0.2, St.x + St.hx + 0.2, St.h + 4.45, St.z + St.hz + 0.2, T_ZINC, [0.55, 0.58, 0.62], 1);
+    { const D = S.SOUND_DESK; geo.box(D.x - 1.1, St.h, D.z - 0.4, D.x + 1.1, St.h + 0.95, D.z + 0.4, T_ZINC, [0.16, 0.15, 0.18], 1); geo.box(D.x - 1.0, St.h + 0.95, D.z - 0.35, D.x + 1.0, St.h + 1.0, D.z + 0.35, T_ZINC, [0.3, 0.3, 0.34], 1); for (let k = 0; k < 6; k++) geo.box(D.x - 0.8 + k * 0.32, St.h + 1.0, D.z - 0.2, D.x - 0.68 + k * 0.32, St.h + 1.04, D.z - 0.08, T_PLASTER, GLOW(0.3 + (k % 3) * 0.4, 1.2 - (k % 3) * 0.3, 0.4), 1); }
     for (let k = 0; k < 5; k++) geo.box(St.x - 3.6 + k * 1.8 - 0.15, St.h + 3.9, St.z - St.hz + 0.1, St.x - 3.6 + k * 1.8 + 0.15, St.h + 4.15, St.z - St.hz + 0.4, T_PLASTER, GLOW(1.1, 0.5, 1.4), 1); }
   // ---- bases principais: bandeira, emblema, estação de munição; Cruzeiro e antena no morro vermelho ----
   for (const t of [0, 1]) { const C = CLEAR[t ? 'verm' : 'azul'], [cx, cz] = C.c, y = C.h, tc = TEAM[t].col, fx = cx + (t ? 9 : -9), fz = cz + 6;

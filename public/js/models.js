@@ -15,7 +15,7 @@ function create(R, sources, map) {
     `#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\nuniform sampler2D uTex; uniform vec3 uSun; uniform vec3 uSunC; uniform vec3 uAmbC; uniform vec3 uLampC; uniform float uLamp; uniform float uFogD; uniform vec3 uFogC;
     varying vec3 vN; varying vec2 vU; varying float vD; varying float vH;
     void main(){ vec3 n = normalize(vN); float d = max(dot(n, uSun), 0.0); vec3 tx = texture2D(uTex, vU).rgb; float ao = 0.72 + 0.28 * clamp(vH * 3.0, 0.0, 1.0);
-      vec3 c = tx * (uAmbC * ao + uSunC * d * 0.95 + uLampC * uLamp) * 1.12; float f = 1.0 - exp(-(vD * uFogD) * (vD * uFogD)); gl_FragColor = vec4(mix(c, uFogC, f), 1.0); }`);
+      vec3 c = tx * (uAmbC * ao + uSunC * d * 0.95 + uLampC * uLamp) * 1.32; float f = 1.0 - exp(-(vD * uFogD) * (vD * uFogD)); gl_FragColor = vec4(mix(c, uFogC, f), 1.0); }`);
   const SUN = RND.SUN;
   const defs = {}; for (const d of S.MODEL_DEFS) defs[d.name] = d;
   // luz dos postes perto de cada construção (pré-calculada)
@@ -31,7 +31,7 @@ function create(R, sources, map) {
       return { min: L.min, scale: L.scale, n: t * 3, pos: mk(new Uint16Array(buf, o, v * 3), gl.ARRAY_BUFFER), nrm: mk(new Int8Array(buf, o + v * 6, v * 4), gl.ARRAY_BUFFER), uv: mk(new Uint16Array(buf, o + v * 10, v * 2), gl.ARRAY_BUFFER), idx: mk(new Uint16Array(buf, o + v * 14, t * 3), gl.ELEMENT_ARRAY_BUFFER) }; });
     const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src.jpg; });
     const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img); gl.generateMipmap(gl.TEXTURE_2D);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); const an = gl.getExtension('EXT_texture_filter_anisotropic'); if (an) gl.texParameterf(gl.TEXTURE_2D, an.TEXTURE_MAX_ANISOTROPY_EXT, 4); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     types[name] = { lods, tex, meta }; ready.n++;
   }
   const loading = Promise.all(Object.keys(sources).map(k => loadOne(k, sources[k]).catch(e => console.warn('modelo não carregou:', k, e))));
@@ -39,7 +39,7 @@ function create(R, sources, map) {
     const cur = R.cur, env = R.env, P = prog; if (!ready.n || !cur.VP) return 0;
     gl.useProgram(P.p); gl.uniformMatrix4fv(P.u.uVP, false, cur.VP); gl.uniform3fv(P.u.uEye, cur.eye); gl.uniform3fv(P.u.uSun, SUN); gl.uniform3fv(P.u.uSunC, env.sunC); gl.uniform3fv(P.u.uAmbC, env.ambC); gl.uniform3fv(P.u.uLampC, env.lampC.map(v => v * env.lampOn)); gl.uniform1f(P.u.uFogD, cur.fogD); gl.uniform3fv(P.u.uFogC, env.fogC);
     for (let i = 0; i < 6; i++) gl.disableVertexAttribArray(i);
-    gl.activeTexture(gl.TEXTURE0); gl.uniform1i(P.u.uTex, 0); let drawn = 0; const e = cur.eye, near = quality === 'baixo' ? 28 : quality === 'alto' ? 60 : 42;
+    gl.activeTexture(gl.TEXTURE0); gl.uniform1i(P.u.uTex, 0); let drawn = 0; const e = cur.eye, near = quality === 'baixo' ? 35 : quality === 'alto' ? 75 : 55;
     const fw = [cur.VP[2], cur.VP[6], cur.VP[10]]; // não usado: o descarte é feito por distância e pelo "atrás da câmera" abaixo
     for (const I of inst) { const T = types[I.name]; if (!T) continue; const d = Math.hypot(I.x - e[0], I.z - e[2]); if (d - I.r > cur.maxDist) continue;
       const cx = cur.VP[0] * I.x + cur.VP[4] * (I.y + I.h / 2) + cur.VP[8] * I.z + cur.VP[12], cw = cur.VP[3] * I.x + cur.VP[7] * (I.y + I.h / 2) + cur.VP[11] * I.z + cur.VP[15];
