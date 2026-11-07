@@ -112,14 +112,14 @@ class RoomManager {
   }
   addActor(r, p) { const G = r.game; const a = G.mk(p.team, G.actors.length, 'remote', p.name, p.key); G.actors.push(a); p.actor = a; p.lastPos = null; }
   roster(r) { return r.game.actors.map(a => ({ id: a.id, name: a.name, team: a.team, bot: a.isBot })); }
-  sendStart(r, p) { const sk = this.socks.get(p.sid); if (!sk || !r.game || !p.actor) return; sk.s.emit('game:start', { seed: MAP_SEED, myId: p.actor.id, roster: this.roster(r), npcs: r.game.npcs.map(n => ({ id: n.id, name: n.name, shirt: n.shirt })), cars: r.game.cars.map(c => ({ id: c.id, dir: c.dir, off: c.off, col: c.col, van: c.van, z: c.z })), cfg: S.CONFIG }); }
+  sendStart(r, p) { const sk = this.socks.get(p.sid); if (!sk || !r.game || !p.actor) return; sk.s.emit('game:start', { seed: MAP_SEED, myId: p.actor.id, roster: this.roster(r), npcs: r.game.npcs.map(n => ({ id: n.id, name: n.name, shirt: n.shirt })), cars: r.game.cars.map(c => ({ id: c.id, dir: c.dir, col: c.col, van: c.van, s: c.s })), cfg: S.CONFIG, dayT: r.game.dayT }); }
   // entrada do jogador: o servidor valida movimento e aplica ações com as mesmas regras do jogo
   input(me, d) {
     const r = me.room && this.rooms.get(me.room); if (!r || r.state !== 'playing' || !d) return; const p = r.players.get(me.key); if (!p || !p.actor) return;
     const now = this.now(); if (now - me.inputWindow > 1000) { me.inputWindow = now; me.inputs = 0; } if (++me.inputs > 45) return; // limite de mensagens
     const a = p.actor, I = a.in, G = r.game, W = G.W;
     I.mx = num(d.mx, -1, 1, 0); I.mz = num(d.mz, -1, 1, 0); I.aim = !!d.a; I.crouch = !!d.c; I.sprint = !!d.sp; I.fire = !!d.f; I.use = !!d.u;
-    if (d.r) I.reload = true; if (d.sw) I.swap = true;
+    if (d.r) I.reload = true; if (d.sw) I.swap = true; if (d.g) I.gren = true; // granada: o servidor confere estoque e intervalo
     a.yaw = num(d.yaw, -1e4, 1e4, a.yaw); a.pitch = num(d.pitch, -1.45, 1.45, 0); a.crouch = I.crouch;
     if (!a.alive) return;
     const x = num(d.x, 0, S.MW, a.x), y = num(d.y, -10, 60, a.y), z = num(d.z, 0, S.ML, a.z);
@@ -148,10 +148,10 @@ class RoomManager {
     const npcs = G.npcs.map(n => [n.id, q(n.x), q(n.y), q(n.z), Math.round(n.yaw * 1000) / 1000, n.alive ? 1 : 0, q(n.spd), q(n.deathT)]);
     const bases = G.bases.map(b => [b.owner, Math.round(b.prog * 1000) / 1000, b.state, b.inside[0], b.inside[1]]);
     const ev = G.events.map(e => { const o = {}; for (const k in e) o[k] = typeof e[k] === 'number' && !Number.isInteger(e[k]) ? Math.round(e[k] * 100) / 100 : e[k]; return o; }); G.events.length = 0;
-    const cars = G.cars.map(c => [q(c.z), q(c.spd)]);
-    const base = { t: Math.round(G.t * 100) / 100, a: actors, n: npcs, c: cars, b: bases, s: [Math.round(G.score[0] * 100) / 100, Math.round(G.score[1] * 100) / 100], tl: Math.round(G.timeLeft), ev };
+    const cars = G.cars.map(c => [q(c.s), q(c.spd)]), gr = G.grenades.map(g => [g.id, q(g.x), q(g.y), q(g.z)]);
+    const base = { t: Math.round(G.t * 100) / 100, dn: Math.round(G.dayT * 1e5) / 1e5, gr, a: actors, n: npcs, c: cars, b: bases, s: [Math.round(G.score[0] * 100) / 100, Math.round(G.score[1] * 100) / 100], tl: Math.round(G.timeLeft), ev };
     for (const p of r.players.values()) { const sk = this.socks.get(p.sid); if (!sk || !p.connected || !p.actor) continue; const a = p.actor;
-      const me = { id: a.id, hp: Math.round(a.hp), alive: a.alive, rt: Math.max(0, Math.round(a.respawnT * 10) / 10), cur: a.cur, am: [a.ammo.rifle.mag, a.ammo.rifle.res, a.ammo.pistol.mag, a.ammo.pistol.res], rl: Math.round(a.reloadT * 100) / 100, sw: Math.round(a.swapT * 100) / 100, rf: Math.round(a.refillT * 100) / 100, rfc: Math.round(a.refillCd * 10) / 10, near: G.nearStation(a), inv: a.invuln > 0 };
+      const me = { id: a.id, hp: Math.round(a.hp), alive: a.alive, rt: Math.max(0, Math.round(a.respawnT * 10) / 10), cur: a.cur, am: [a.ammo.rifle.mag, a.ammo.rifle.res, a.ammo.pistol.mag, a.ammo.pistol.res], rl: Math.round(a.reloadT * 100) / 100, sw: Math.round(a.swapT * 100) / 100, rf: Math.round(a.refillT * 100) / 100, rfc: Math.round(a.refillCd * 10) / 10, near: G.nearStation(a), inv: a.invuln > 0, gn: a.gren || 0 };
       const justSpawned = a.alive && !p.wasAlive; p.wasAlive = a.alive;
       if (p.correct || !a.alive || justSpawned) { me.pos = [q(a.x), q(a.y), q(a.z)]; me.cor = 1; p.correct = false; }
       sk.s.emit('game:snap', Object.assign({ me }, base)); }
