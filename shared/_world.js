@@ -1,13 +1,16 @@
 // ---------- colisão, raios e navegação ----------
 function makeWorld(map) {
-  const { K, H } = map;
+  const { K, H } = map; const CT = map.CT, CB = map.CB;
   const blockedAt = (x, z) => { const i = Math.floor(x / CELL), j = Math.floor(z / CELL); if (i < 0 || j < 0 || i >= GX || j >= GZ) return true; return !WALKABLE[K[j * GX + i]]; };
   const hCell = (x, z) => { const i = Math.floor(x / CELL), j = Math.floor(z / CELL); if (i < 0 || j < 0 || i >= GX || j >= GZ) return 99; return H[j * GX + i]; };
   const OFF = [-1, 0, 1];
   // obstáculos móveis (carros) ficam em this.dyn: cada sala tem a sua lista (veja fork())
+  // obstáculos móveis (carros): caixas orientadas {x, z, fx, fz (frente), hl, hw, top}
   function fitsD(dyn, x, z, feet, r) { for (const a of OFF) for (const b of OFF) { const px = x + a * r, pz = z + b * r; if (blockedAt(px, pz)) return false; if (hCell(px, pz) > feet + STEP_UP) return false; }
-    for (const d of dyn) if (x + r > d.x0 && x - r < d.x1 && z + r > d.z0 && z - r < d.z1 && d.top > feet + STEP_UP) return false; return true; }
-  function rayDyn(ox, oy, oz, dx, dy, dz, maxT) { let best = maxT; for (const d of this.dyn) { let t0 = 0, t1 = best; for (const [o, v, lo, hi] of [[ox, dx, d.x0, d.x1], [oy, dy, 0.25, d.top], [oz, dz, d.z0, d.z1]]) { if (Math.abs(v) < 1e-9) { if (o < lo || o > hi) { t0 = 1; t1 = 0; break; } continue; } let a = (lo - o) / v, b = (hi - o) / v; if (a > b) { const q = a; a = b; b = q; } t0 = Math.max(t0, a); t1 = Math.min(t1, b); if (t0 > t1) break; } if (t0 <= t1 && t0 < best) best = t0; } return best; }
+    for (const d of dyn) { const dx = x - d.x, dz = z - d.z, al = dx * d.fx + dz * d.fz, la = -dx * d.fz + dz * d.fx; if (Math.abs(al) < d.hl + r && Math.abs(la) < d.hw + r && d.top > feet + STEP_UP) return false; } return true; }
+  function rayDyn(ox, oy, oz, dx, dy, dz, maxT) { let best = maxT; for (const d of this.dyn) { const rx = ox - d.x, rz = oz - d.z, o1 = rx * d.fx + rz * d.fz, o2 = -rx * d.fz + rz * d.fx, v1 = dx * d.fx + dz * d.fz, v2 = -dx * d.fz + dz * d.fx; let t0 = 0, t1 = best;
+    for (const [o, v, lo, hi] of [[o1, v1, -d.hl, d.hl], [oy, dy, 0.25, d.top], [o2, v2, -d.hw, d.hw]]) { if (Math.abs(v) < 1e-9) { if (o < lo || o > hi) { t0 = 1; t1 = 0; break; } continue; } let a = (lo - o) / v, b = (hi - o) / v; if (a > b) { const q = a; a = b; b = q; } t0 = Math.max(t0, a); t1 = Math.min(t1, b); if (t0 > t1) break; }
+    if (t0 <= t1 && t0 < best) best = t0; } return best; }
   function groundAt(x, z, r) { let g = -99; for (const a of OFF) for (const b of OFF) { const px = x + a * r, pz = z + b * r; if (blockedAt(px, pz)) continue; g = Math.max(g, hCell(px, pz)); } return g; }
   // move um ator (pés em a.y) com deslizamento nas paredes
   function fits(x, z, feet, r) { return fitsD(this.dyn, x, z, feet, r); }
@@ -26,24 +29,27 @@ function makeWorld(map) {
     return hitWall;
   }
   // raio em DDA pela grade: devolve {t, face}
-  function ray(ox, oy, oz, dx, dy, dz, maxT) {
+  // vision=true: as copas das árvores também bloqueiam (usado na percepção, não nas balas)
+  function ray(ox, oy, oz, dx, dy, dz, maxT, vision) {
     let i = Math.floor(ox / CELL), j = Math.floor(oz / CELL);
     const si = dx > 0 ? 1 : -1, sj = dz > 0 ? 1 : -1;
     const tdi = dx ? Math.abs(CELL / dx) : Infinity, tdj = dz ? Math.abs(CELL / dz) : Infinity;
     let tmi = dx ? (dx > 0 ? (i + 1) * CELL - ox : ox - i * CELL) / Math.abs(dx) : Infinity;
     let tmj = dz ? (dz > 0 ? (j + 1) * CELL - oz : oz - j * CELL) / Math.abs(dz) : Infinity;
-    let t0 = 0, face = 0;
+    let t0 = 0, face = 0, leafAcc = 0;
     for (let it = 0; it < 4000; it++) {
       const t1 = Math.min(tmi, tmj, maxT), inside = i >= 0 && j >= 0 && i < GX && j < GZ, h = inside ? H[j * GX + i] : -0.03;
       const ya = oy + dy * t0, yb = oy + dy * t1;
       if (ya <= h) return { t: t0, face, i, j };
       if (yb <= h) return { t: (h - oy) / dy, face: 0, i, j };
+      // mata densa: depois de ~7 m dentro da vegetação (copas e mato baixo) a visão é bloqueada
+      if (vision && inside) { const c = j * GX + i, top = CT[c]; if (top > 0) { const lo = Math.min(ya, yb), hi = Math.max(ya, yb); if (hi >= 0.5 && lo <= top) { leafAcc += t1 - t0; if (leafAcc > 7) return { t: t0, face: 3, i, j, leaf: true }; } } }
       if (t1 >= maxT) return null;
       if (tmi < tmj) { t0 = tmi; tmi += tdi; i += si; face = 1; } else { t0 = tmj; tmj += tdj; j += sj; face = 2; }
     }
     return null;
   }
-  function los(ax, ay, az, bx, by, bz) { const dx = bx - ax, dy = by - ay, dz = bz - az, d = Math.hypot(dx, dy, dz); if (d < 0.01) return true; const h = ray(ax, ay, az, dx / d, dy / d, dz / d, d); return !h; }
+  function los(ax, ay, az, bx, by, bz) { const dx = bx - ax, dy = by - ay, dz = bz - az, d = Math.hypot(dx, dy, dz); if (d < 0.01) return true; const h = ray(ax, ay, az, dx / d, dy / d, dz / d, d, true); return !h; }
   // navegação
   const OK = new Uint8Array(NC);
   for (let c = 0; c < NC; c++) { if (!WALKABLE[K[c]]) continue; const i = c % GX, j = (c / GX) | 0; if (i < 1 || j < 1 || i >= GX - 1 || j >= GZ - 1) continue; let ok = 1; for (let a = -1; a <= 1 && ok; a++) for (let b = -1; b <= 1; b++) { const n = (j + b) * GX + i + a; if (!WALKABLE[K[n]] || H[n] > H[c] + 0.5) { ok = 0; break; } } OK[c] = ok; }

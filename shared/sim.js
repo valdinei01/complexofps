@@ -12,108 +12,185 @@ const lerp = (a, b, t) => a + (b - a) * t;
 function angDiff(a, b) { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; }
 
 // ---------- mapa: grade de 0,5 m ----------
-// Mapa ampliado (140 x 280 m, 3x a área anterior). Eixo z liga as bases: Azul no sul (z≈0), Vermelha no norte (z≈280).
-// No meio fica a ZONA CENTRAL: Praça Central (Base A), Escadão no morro (Base B) e Canal (Base C).
-const CELL = 0.5, MW = 140, ML = 280, GX = 280, GZ = 560, NC = GX * GZ, MID = 140;
-const K_VOID = 0, K_AVE = 1, K_WALK = 2, K_STREET = 3, K_ESC = 4, K_BECO = 5, K_ROOF = 6, K_BLOCK = 7, K_PLAZA = 8, K_LOT = 9;
-const WALKABLE = new Uint8Array([0, 1, 1, 1, 1, 1, 1, 0, 1, 0]);
+// Reconstrução a partir do MAPA OFICIAL (imagem de referência). Coordenadas da imagem (px) viram metros:
+// x = px * 0,15 (leste) e z = (940 - py) * 0,15 (norte). Mapa: 250 m (leste-oeste) x 141 m (norte-sul).
+const CELL = 0.5, MW = 250, ML = 141, GX = 500, GZ = 282, NC = GX * GZ, MID = 70;
+const K_VOID = 0, K_AVE = 1, K_WALK = 2, K_STREET = 3, K_ESC = 4, K_BECO = 5, K_ROOF = 6, K_BLOCK = 7, K_PLAZA = 8, K_LOT = 9, K_TRAIL = 10, K_MATA = 11;
+const WALKABLE = new Uint8Array([0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1]);
 // materiais de bloco
-const B_MURO = 1, B_TANK = 2, B_GUARD = 3, B_WALL = 4, B_INVIS = 5, B_TANK2 = 6, B_SAND = 7, B_JERSEY = 8, B_BRICKS = 9, B_BARREL = 10, B_SUPPLY = 11;
+const B_MURO = 1, B_TANK = 2, B_GUARD = 3, B_WALL = 4, B_INVIS = 5, B_TANK2 = 6, B_SAND = 7, B_JERSEY = 8, B_BRICKS = 9, B_BARREL = 10, B_SUPPLY = 11, B_ROCK = 12, B_FENCE = 13, B_MODEL = 14;
+// construções modeladas em 3D (public/models): tamanho real em metros (largura x, profundidade z, altura)
+const MODEL_DEFS = [{"name": "casa1", "label": "Casa de dois andares", "s": 7.6, "w": 6.33, "d": 6.58, "h": 7.45, "cx": -0.0001, "cz": 0.0001, "y0": -0.4907}, {"name": "comercio", "label": "Com\u00e9rcio", "s": 8.4, "w": 5.52, "d": 8.22, "h": 6.97, "cx": 0.0, "cz": 0.0002, "y0": -0.4149}, {"name": "skj", "label": "Casa com varanda", "s": 7.8, "w": 7.13, "d": 6.2, "h": 7.65, "cx": 0.0002, "cz": 0.0002, "y0": -0.4906}, {"name": "ssjj", "label": "Sobrado de tr\u00eas andares", "s": 9.4, "w": 5.55, "d": 4.61, "h": 9.19, "cx": -0.0003, "cz": 0.0001, "y0": -0.4891}, {"name": "xx", "label": "Casa com laje", "s": 7.6, "w": 6.18, "d": 6.23, "h": 7.44, "cx": -0.0001, "cz": 0.0001, "y0": -0.4895}, {"name": "zss", "label": "Casa geminada", "s": 8.8, "w": 7.21, "d": 8.64, "h": 6.9, "cx": 0.0003, "cz": 0.0001, "y0": -0.3744}];
+const MODEL_COUNT = { casa1: 8, comercio: 6, skj: 8, ssjj: 8, xx: 8, zss: 7 };
 const STEP_UP = 0.55, NAV_STEP = 0.5, NAV_DROP = 3.4;
-// Avenida das Américas: 2 faixas de rolamento + estacionamento de cada lado, calçadas largas
-const AVE_HW = 6.5, SIDEW = 3.0, LANE_X = 2.0, PARK_X = 5.2;
-const aveX = z => 22 + 1.2 * Math.cos((z - MID) / 40);
-const aveEast = z => aveX(z) + AVE_HW + SIDEW;
-const foldZ = z => z <= MID ? z : ML - z;
-const ESC_HW = 3;                          // meia largura do escadão (6 m)
-const WALK_X0 = 126.5, WALK_X1 = 131, WALK_H = 0.3, WATER_X1 = 137; // beira do valão e canal
-function hill(x, z, cx, cz, rx, rz, h) { const r = Math.hypot((x - cx) / rx, (z - cz) / rz); return h * sm(1, 0.25, r); }
-// relevo variado: baixada plana perto da avenida e nas bases, morro grande na zona central, morrinhos nos bairros
-function terrain(x, z) {
-  if (x < aveEast(z) + 0.6) return 0;
-  const zf = foldZ(z), d = Math.abs(z - MID);
-  let g = 15 * sm(56, 98, x) * (1 - sm(112, 126, x)) * sm(78, 46, d);          // Morro do Escadão
-  g += hill(x, zf, 97, 62, 20, 22, 7);                                         // Morro do Mirante (um de cada lado)
-  g += hill(x, zf, 66, 72, 12, 11, 2.6);                                       // elevação no bairro
-  g += 0.3 * Math.sin(x / 9) * Math.sin(zf / 11) * sm(aveEast(z) + 2, aveEast(z) + 12, x) * (1 - sm(124, 127, x));
-  g *= 1 - sm(120, 126.5, x);
-  return Math.max(g, 0);
-}
-// ruas em coordenadas "dobradas" (metade sul; a metade norte é espelhada => mapa equilibrado)
-function sampled(x0, x1, f, step) { const p = []; for (let x = x0; x <= x1 + 1e-6; x += step) p.push([x, f(x)]); return p; }
+const PXS = 0.15, P = (px, py) => [px * PXS, (940 - py) * PXS], PL = a => a.map(q => P(q[0], q[1]));
+// ---- catálogo de setores da imagem (px) ----
+const AVE_PTS = PL([[1215, -80], [1205, 0], [1195, 120], [1150, 230], [1065, 330], [1020, 420], [985, 520], [930, 620], [870, 720], [820, 820], [790, 940], [780, 1020]]);
+const CANAL_PTS = PL([[1300, -80], [1290, 40], [1270, 150], [1215, 260], [1140, 360], [1095, 450], [1055, 560], [1005, 660], [965, 760], [935, 860], [915, 940], [910, 1020]]);
+const AVE_HW = 3.6, SIDEW = 2.0, LANE_X = 1.8, PARK_X = 0;      // uma faixa em cada sentido
+const CAN_HW = 2.6, CAN_WALL = 0.5, BANK_W = 1.8, WALK_H = 0.25;  // canal: água, contenção e margens
+const BOTTOM_ROAD = PL([[480, 760], [480, 780], [486, 842], [545, 872], [700, 872], [790, 872], [1000, 872], [1150, 866], [1250, 840], [1286, 800], [1286, 773]]);
+const BRIDGES = [PL([[1178, 212], [1272, 232]]), PL([[1046, 466], [1124, 466]]), PL([[978, 632], [1052, 642]])];
+const POLY_LEFT = PL([[0, 255], [120, 232], [230, 252], [330, 300], [385, 362], [430, 432], [470, 520], [560, 562], [640, 640], [705, 700], [745, 765], [735, 850], [700, 945], [0, 945]]);
+const POLY_RIGHT = PL([[1150, 250], [1232, 232], [1335, 250], [1420, 298], [1560, 318], [1675, 330], [1675, 945], [955, 945], [985, 800], [1035, 690], [1075, 560], [1118, 452], [1168, 352]]);
+const CLEAR = { // clareiras e praças: centro (m), raios (m), altura do piso
+  azul: { c: P(360, 160), rx: 17.5, rz: 11, h: 4.5, name: 'Base Azul (Alto da Mata)' },
+  A: { c: P(820, 200), rx: 17, rz: 11, h: 3, name: 'Base A (Clareira da Mata)' },
+  verm: { c: P(1510, 182), rx: 18.5, rz: 11, h: 4.5, name: 'Base Vermelha (Morro do Cruzeiro)' },
+  praca: { c: P(430, 712), rx: 14, rz: 10, h: 0, name: 'Praça Central' },
+  C: { c: P(1225, 716), rx: 7.5, rz: 5.5, h: 0, name: 'Base C (Canal)' },
+  cl1: { c: P(600, 420), rx: 6, rz: 5, h: null }, cl2: { c: P(700, 615), rx: 5.5, rz: 4.5, h: null },
+};
+const QUADRA = { x: 205.5, z: 65.25, hx: 13, hz: 8, h: 0.8 };   // Quadra do Baile (piso 26 x 16 m)
+const STAGE = { x: 205.5, z: 77.2, hx: 5, hz: 2.2, h: 1.7 };     // palco ao norte da quadra
+// Malha organizada de ruas (em metros). Regra: toda rua e todo beco terminam em outra rua, numa praça ou na mata —
+// não existe beco sem saída (há um teste automático que confere isso).
+const SEG = (name, kind, hw, pts) => ({ name, kind, hw, pts });
 const STREETS = [
-  // ruas principais (largas)
-  { name: 'Rua Principal da Baixada', kind: K_STREET, hw: 3.4, pts: sampled(30, 127, x => 40 + 1.5 * Math.sin(x / 14), 3) },
-  { name: 'Rua do Mirante', kind: K_STREET, hw: 3.2, pts: sampled(30, 127, x => 98 + 2 * Math.sin(x / 11 + 1), 3) },
-  // ruas secundárias (intermediárias), com desvios nos cruzamentos
-  { name: 'Rua do Comércio', kind: K_STREET, hw: 2.5, pts: [[47, 15], [47.5, 40]] },
-  { name: 'Rua do Comércio', kind: K_STREET, hw: 2.5, pts: [[51, 40], [51.5, 98]] },
-  { name: 'Rua do Comércio', kind: K_STREET, hw: 2.5, pts: [[47, 98], [47, 127]] },
-  { name: 'Rua da Laje', kind: K_STREET, hw: 2.4, pts: [[73, 15], [74, 40]] },
-  { name: 'Rua da Laje', kind: K_STREET, hw: 2.4, pts: [[78, 40], [78.5, 98]] },
-  { name: 'Rua da Laje', kind: K_STREET, hw: 2.4, pts: [[74, 98], [74, 125]] },
-  { name: 'Travessa Boa Vista', kind: K_STREET, hw: 2.5, pts: [[104, 15], [103, 40]] },
-  { name: 'Travessa Boa Vista', kind: K_STREET, hw: 2.5, pts: [[108, 40], [108.5, 98]] },
-  { name: 'Travessa Boa Vista', kind: K_STREET, hw: 2.5, pts: [[104, 98], [104, 136]] },
-  { name: 'Ladeira do Alto', kind: K_STREET, hw: 2.6, pts: sampled(96, 127, x => 127 - (x - 96) * 0.06, 3) },
-  { name: 'Caminho do Alto', kind: K_STREET, hw: 2.2, pts: [[96, 114], [96, 136]] },
-  // becos e vielas (mais estreitos, mas sem aperto)
-  { name: 'Beco do Gato', kind: K_BECO, hw: 1.25, pts: [[31, 22], [38, 22], [38, 27], [47, 27]] },
-  { name: 'Beco da Dona Cida', kind: K_BECO, hw: 1.25, pts: [[51.5, 66], [60, 66], [60, 70], [78, 70]] },
-  { name: 'Beco do Varal', kind: K_BECO, hw: 1.2, pts: [[78.5, 82], [90, 82], [90, 78], [108, 78]] },
-  { name: 'Beco da Antena', kind: K_BECO, hw: 1.2, pts: [[104, 22], [115, 22], [115, 18], [127, 18]] },
-  { name: 'Beco do Pagode', kind: K_BECO, hw: 1.2, pts: [[108.5, 60], [118, 60], [118, 64], [127, 64]] },
-  { name: 'Beco da Bica', kind: K_BECO, hw: 1.25, pts: [[31, 116], [40, 116], [40, 120], [47, 120]] },
-  { name: 'Escadinha do Sapo', kind: K_BECO, hw: 1.2, pts: [[60, 98], [60, 108], [64, 108], [64, 132]] },
-  { name: 'Escadinha da Fé', kind: K_BECO, hw: 1.2, pts: [[86, 98], [86, 110], [82, 110], [82, 133]] },
-  { name: 'Beco do Mirante', kind: K_BECO, hw: 1.2, pts: [[78.5, 50], [92, 50], [92, 46], [108, 46]] },
-  { name: 'Beco do Quartel', kind: K_BECO, hw: 1.2, pts: [[110, 14], [127, 14]] },
+  // ---- Favela do Escadão (esquerda) ----
+  SEG('Rua da Mina', K_STREET, 2.7, [[3, 10.2], [82, 10.2]]),
+  SEG('Rua da Serra', K_STREET, 2.6, [[4, 10.2], [4, 108]]),
+  SEG('Rua da Praça', K_STREET, 2.9, [[4, 26], [60, 26]]),
+  SEG('Rua do Escadão', K_STREET, 2.7, [[4, 44], [50, 44]]),
+  SEG('Rua da Vila', K_STREET, 2.6, [[4, 62], [44, 62]]),
+  SEG('Travessa da Serra', K_STREET, 2.4, [[24, 10.2], [24, 62]]),
+  SEG('Travessa do Meio', K_STREET, 2.3, [[44, 44], [44, 62]]),
+  SEG('Rua da Mata', K_STREET, 2.7, [[78, 30], [112, 30]]),
+  SEG('Travessa do Mato', K_STREET, 2.4, [[88, 10.2], [88, 56]]),
+  SEG('Travessa da Ponta', K_STREET, 2.3, [[100, 10.2], [100, 44]]),
+  SEG('Beco da Mina', K_BECO, 1.8, [[58, 10.2], [58, 27]]),
+  SEG('Beco do Varal', K_BECO, 1.8, [[14, 10.2], [14, 26]]),
+  SEG('Beco da Bica', K_BECO, 1.8, [[4, 52], [24, 52]]),
+  SEG('Beco do Sapo', K_BECO, 1.8, [[34, 26], [34, 44]]),
+  SEG('Rua do Alto', K_STREET, 3.1, [[27, 86], [27, 108]]),
+  SEG('Ladeira do Alto', K_STREET, 2.9, [[22, 77], [4, 77]]),
+  // ---- Favela do Valão (direita) ----
+  SEG('Rua do Valão', K_STREET, 2.7, [[150, 10], [246, 10]]),
+  SEG('Rua das Lajes', K_STREET, 2.7, [[149, 26], [246, 26]]),
+  SEG('Rua Vila Nova', K_STREET, 2.7, [[156, 46], [246, 46]]),
+  SEG('Rua da Quadra', K_STREET, 2.7, [[176, 86], [246, 86]]),
+  SEG('Travessa do Canal', K_STREET, 2.5, [[176, 10], [176, 86]]),
+  SEG('Travessa do Baile', K_STREET, 2.5, [[205, 10], [205, 56]]),
+  SEG('Travessa do Topo', K_STREET, 2.5, [[230, 10], [230, 86]]),
+  SEG('Rua do Cruzeiro', K_STREET, 2.6, [[246, 10], [246, 95]]),
+  SEG('Beco da Quadra', K_BECO, 1.9, [[176, 66], [192, 66]]),
+  SEG('Beco do Pagode', K_BECO, 1.9, [[219, 66], [230, 66]]),
+  SEG('Beco da Vila Nova', K_BECO, 1.8, [[230, 64], [246, 64]]),
+  SEG('Beco do Topo', K_BECO, 1.8, [[190, 26], [190, 46]]),
 ];
-function segDist(px, pz, a, b) { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz; let t = l2 ? ((px - a[0]) * dx + (pz - a[1]) * dz) / l2 : 0; t = clamp(t, 0, 1); const qx = a[0] + dx * t - px, qz = a[1] + dz * t - pz; return Math.sqrt(qx * qx + qz * qz); }
-let ESC_LAND = [];   // patamares do escadão: {x, h, hx, hz}
-const ESC_X0 = 58, ESC_X1 = 104;
-const LAND = [{ x: 67, hx: 2.5, hz: 6, h: 3.5 }, { x: 78, hx: 2.5, hz: 6, h: 7.5 }, { x: 89, hx: 3.5, hz: 7, h: 11.5 }, { x: 100, hx: 3, hz: 6.5, h: 15 }];
-const PRACA = { x: 47, z: MID, r: 4.2, x0: 31, x1: ESC_X0, hz: 12 };   // Praça Central (Base A)
-const BASEZ = 17;                                                         // bases principais: z dobrado de 2,5 a 17
-const SUPPLY = [{ x: 76, z: 3.6 }, { x: 76, z: ML - 3.6 }];            // estação de munição: Azul (sul) e Vermelha (norte)
+const TRAILS = [ // trilhas de terra na mata
+  { name: 'Trilha da Mata', pts: PL([[445, 172], [520, 118], [600, 92], [680, 150], [735, 190]]) },
+  { name: 'Trilha do Alto', pts: PL([[335, 228], [280, 240], [205, 248]]) },
+  { name: 'Trilha da Avenida', pts: PL([[905, 222], [960, 250], [1020, 300], [1062, 322]]) },
+  { name: 'Trilha Central', pts: PL([[800, 270], [700, 360], [640, 450], [580, 540], [520, 622], [480, 662]]) },
+  { name: 'Trilha do Sul', pts: PL([[600, 560], [700, 600], [800, 640], [890, 650]]) },
+  { name: 'Trilha Norte', pts: PL([[760, 128], [840, 62], [950, 40], [1060, 70], [1150, 100]]) },
+  { name: 'Trilha do Cruzeiro', pts: PL([[1300, 367], [1300, 255], [1350, 210], [1400, 190]]) },
+  { name: 'Trilha da Ponte', pts: PL([[1178, 214], [1110, 210], [1040, 206], [960, 200], [932, 198]]) },
+];
+// Escadão Principal: lances retos e patamares (sobe da Praça Central até o Alto do Escadão)
+const ESC = {
+  flights: [{ ax: 'z', x0: 51, x1: 57, a0: 44.5, a1: 57, h0: 0, h1: 1.7 }, { ax: 'z', x0: 51, x1: 57, a0: 61, a1: 71, h0: 1.7, h1: 3.4 }, { ax: 'x', z0: 70.5, z1: 76.5, a0: 44, a1: 34, h0: 3.4, h1: 5 }],
+  lands: [{ x0: 48, x1: 60, z0: 37.5, z1: 44.5, h: 0 }, { x0: 50, x1: 58, z0: 57, z1: 61, h: 1.7 }, { x0: 44, x1: 58, z0: 71, z1: 76.5, h: 3.4 }, { x0: 22, x1: 34, z0: 68, z1: 86, h: 5 }],
+};
+let ESC_LAND = ESC.lands.map(l => ({ x: (l.x0 + l.x1) / 2, z: (l.z0 + l.z1) / 2, hx: (l.x1 - l.x0) / 2, hz: (l.z1 - l.z0) / 2, h: l.h }));
+const PRACA = { x: CLEAR.praca.c[0], z: CLEAR.praca.c[1], r: 4.5, h: CLEAR.praca.h };
+const SUPPLY = [{ x: CLEAR.azul.c[0] - 6, z: CLEAR.azul.c[1] + 4.6 }, { x: CLEAR.verm.c[0] + 6, z: CLEAR.verm.c[1] + 4.6 }]; // ponto de reabastecimento (a caixa fica logo ao norte)
 const CANAL_ST = [];
-const FRONTAGE = [[20, 34], [58, 80], [102, 120]]; // trechos onde as casas encostam na calçada da avenida (lojinhas)
+// compatibilidade com o código anterior
+const WALK_X0 = 0, WALK_X1 = 0, WATER_X1 = 0, ESC_HW = 3, ESC_X0 = 51, ESC_X1 = 57, BASEZ = 0;
+const foldZ = z => z;
+function segDist(px, pz, a, b) { const dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz; let t = l2 ? ((px - a[0]) * dx + (pz - a[1]) * dz) / l2 : 0; t = clamp(t, 0, 1); const qx = a[0] + dx * t - px, qz = a[1] + dz * t - pz; return Math.sqrt(qx * qx + qz * qz); }
+function polyDist(x, z, pts) { let d = 1e9; for (let i = 0; i < pts.length - 1; i++) d = Math.min(d, segDist(x, z, pts[i], pts[i + 1])); return d; }
+// distância com sinal (positivo a leste da linha) — usado para saber o lado da avenida/canal
+function polySide(x, z, pts) { let best = 1e9, side = 1; for (let i = 0; i < pts.length - 1; i++) { const a = pts[i], b = pts[i + 1], d = segDist(x, z, a, b); if (d < best) { best = d; const cr = (b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0]); side = cr < 0 ? 1 : -1; } } return best * side; }
+function inPoly(x, z, poly) { let ins = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[i], b = poly[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) ins = !ins; } return ins; }
+// ponto da avenida para um dado z (as duas vias são "verticais" o bastante para isso)
+function lineX(pts, z) { for (let i = 0; i < pts.length - 1; i++) { const a = pts[i], b = pts[i + 1]; if ((z <= a[1] && z >= b[1]) || (z >= a[1] && z <= b[1])) { const t = (z - a[1]) / (b[1] - a[1] || 1); return a[0] + (b[0] - a[0]) * t; } } return pts[pts.length - 1][0]; }
+const aveX = z => lineX(AVE_PTS, z);
+const aveEast = z => aveX(z) + AVE_HW + SIDEW;
+const ellR = (x, z, k) => Math.hypot((x - k.c[0]) / k.rx, (z - k.c[1]) / k.rz);
+// relevo: pontos de controle (m) — morros nas bases e no Alto do Escadão, baixada na avenida e no canal
+// relevo suave e moderado: morros arredondados (perfil (1-r²)², sem quinas) somados, baixada na avenida e no canal
+const HILLS = [[28, 80, 5, 40, 36], [54, 117, 3.2, 44, 34], [10, 120, 3, 30, 28], [123, 110, 2.4, 40, 32], [100, 72, 1.8, 38, 36], [226, 114, 3.2, 44, 34], [244, 128, 2.6, 28, 24], [236, 46, 2.4, 32, 34], [214, 98, 1.8, 30, 22], [8, 40, 1.6, 26, 30]];
+const hillsAt = (x, z) => { let g = 0; for (const [cx, cz, h, rx, rz] of HILLS) { const r2 = ((x - cx) / rx) ** 2 + ((z - cz) / rz) ** 2; if (r2 < 1) g += h * (1 - r2) * (1 - r2); } return g; };
+function terrain(x, z) {
+  let g = hillsAt(x, z);
+  for (const k in CLEAR) { const C = CLEAR[k]; if (C.h == null) continue; const r = ellR(x, z, C); g = lerp(g, C.h, sm(2.6, 0.9, r)); }
+  { const r = Math.hypot((x - QUADRA.x) / (QUADRA.hx + 7), (z - QUADRA.z) / (QUADRA.hz + 9)); g = lerp(g, QUADRA.h, sm(1.6, 0.9, r)); }
+  // baixada da avenida, do canal, da passagem de baixo e das cabeceiras das pontes (aplicada por último)
+  const dAC = Math.min(Math.abs(polySide(x, z, AVE_PTS)), Math.abs(polySide(x, z, CANAL_PTS))); g *= sm(6, 28, dAC);
+  const dR = polyDist(x, z, BOTTOM_ROAD); g *= sm(3, 12, dR);
+  for (const b of BRIDGES) g *= sm(3, 16, polyDist(x, z, b));
+  return Math.max(0, g);
+}
+for (const k of ['azul', 'A', 'verm']) CLEAR[k].h = Math.round(hillsAt(CLEAR[k].c[0], CLEAR[k].c[1]) * 20) / 20; // clareira no nível natural do morro
+
+function escAt(x, z) { // altura do escadão nesta célula (ou null)
+  for (const L of ESC.lands) if (x >= L.x0 && x <= L.x1 && z >= L.z0 && z <= L.z1) return { h: L.h, flat: true };
+  for (const F of ESC.flights) { const across = F.ax === 'z' ? x : z, lo = F.ax === 'z' ? F.x0 : F.z0, hi = F.ax === 'z' ? F.x1 : F.z1; if (across < lo || across > hi) continue;
+    const along = F.ax === 'z' ? z : x, a0 = Math.min(F.a0, F.a1), a1 = Math.max(F.a0, F.a1); if (along < a0 || along > a1) continue;
+    const n = Math.max(1, Math.round((a1 - a0) / CELL)), k = clamp(Math.floor(Math.abs(along - F.a0) / CELL), 0, n - 1);
+    return { h: F.h0 + (F.h1 - F.h0) * (k + 1) / (n + 1), flat: false, F }; }
+  return null;
+}
 
 function buildMap(seed) {
   const R = mulberry(seed);
   const K = new Uint8Array(NC), H = new Float32Array(NC), HV = new Float32Array(NC), M = new Uint8Array(NC), HID = new Int32Array(NC).fill(-1), SN = new Int16Array(NC).fill(-1);
+  const CT = new Float32Array(NC), CB = new Float32Array(NC);   // copa das árvores (topo/base): bloqueia a VISÃO, não as balas
   const idx = (i, j) => j * GX + i;
-  // 1) traçado
-  const x0Esc = ESC_X0;
-  ESC_LAND = [];
+  // 1) traçado: prioridade borda > ponte/estrada > canal > avenida > escadão/praças > ruas > trilhas > favela (lote) > mata
   for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) {
-    const x = (i + 0.5) * CELL, z = (j + 0.5) * CELL, zf = foldZ(z), ax = aveX(z), c = idx(i, j), dzm = Math.abs(z - MID);
-    if (x < 0.6 || x > MW - 0.6) { K[c] = K_BLOCK; M[c] = B_WALL; continue; }
-    if (z < 1 || z > ML - 1) { // limites; na avenida só uma barreira baixa (os carros seguem além do mapa)
-      if (x > ax - AVE_HW - SIDEW && x < ax + AVE_HW + SIDEW) { K[c] = K_BLOCK; M[c] = B_JERSEY; } else { K[c] = K_BLOCK; M[c] = B_WALL; } continue; }
-    if (x > WATER_X1) { K[c] = K_BLOCK; M[c] = B_WALL; continue; }
-    if (x > WALK_X1) { K[c] = K_VOID; continue; }                   // água do canal
-    if (x < ax - AVE_HW - SIDEW) { K[c] = K_LOT; continue; }          // lojas do lado oeste
-    if (x < ax - AVE_HW) { K[c] = K_WALK; continue; }
-    if (x < ax + AVE_HW) { K[c] = K_AVE; continue; }
-    if (x < ax + AVE_HW + SIDEW) { K[c] = K_WALK; continue; }
+    const x = (i + 0.5) * CELL, z = (j + 0.5) * CELL, c = idx(i, j);
+    const dA = polySide(x, z, AVE_PTS), dC = polySide(x, z, CANAL_PTS), adA = Math.abs(dA), adC = Math.abs(dC), dR = polyDist(x, z, BOTTOM_ROAD);
+    const edge = x < 0.8 || x > MW - 0.8 || z < 0.8 || z > ML - 0.8;
+    if (edge) { if (adA <= AVE_HW + SIDEW) { K[c] = K_BLOCK; M[c] = B_JERSEY; } else if (adC <= CAN_HW) K[c] = K_VOID; else { K[c] = K_BLOCK; M[c] = B_ROCK; } continue; }
     let k = -1, sn = -1;
-    if (x >= WALK_X0 && zf >= 12) { K[c] = K_STREET; SN[c] = -5; continue; }   // beira do valão (rota de flanco)
-    if (x >= ESC_X0 && x <= ESC_X1 && dzm <= ESC_HW) k = K_ESC;
-    else if (LAND.some(l => Math.abs(x - l.x) <= l.hx && dzm <= l.hz)) k = K_ESC;
-    else if (x <= PRACA.x1 && dzm <= PRACA.hz) k = K_PLAZA;                 // Praça Central
-    if (k < 0) for (let s = 0; s < STREETS.length; s++) { const S = STREETS[s]; for (let p = 0; p < S.pts.length - 1; p++) if (segDist(x, zf, S.pts[p], S.pts[p + 1]) <= S.hw) { k = S.kind; sn = s; break; } if (k >= 0) break; }
-    if (k < 0 && zf >= 1 && zf <= BASEZ && x >= 36 && x <= 118) k = K_PLAZA;   // base principal (encostada no muro do fundo)
-    if (k < 0 && x < ax + AVE_HW + SIDEW + 0.6 && !FRONTAGE.some(f => zf >= f[0] && zf <= f[1])) { K[c] = K_BLOCK; M[c] = B_MURO; continue; }
-    K[c] = k < 0 ? K_LOT : k; SN[c] = sn;
+    if (BRIDGES.some(b => polyDist(x, z, b) <= 1.3)) { k = K_STREET; sn = -6; }
+    else if (dR <= 3.4) { k = adA <= AVE_HW ? K_AVE : K_STREET; sn = -7; }
+    else if (adC <= CAN_HW) { K[c] = K_VOID; continue; }
+    else if (adC <= CAN_HW + CAN_WALL) { K[c] = K_BLOCK; M[c] = B_GUARD; continue; }
+    else if (adC <= CAN_HW + CAN_WALL + BANK_W && z >= 8.5 && z <= 109) { k = K_STREET; sn = -5; }
+    else if (adC <= CAN_HW + CAN_WALL + BANK_W) { K[c] = K_BLOCK; M[c] = B_GUARD; continue; }
+    else if (adA <= AVE_HW) k = K_AVE;
+    else if (adA <= AVE_HW + SIDEW) k = K_WALK;
+    if (k < 0) { const e = escAt(x, z); if (e) { k = K_ESC; } }
+    if (k < 0) { for (const key of ['praca', 'C']) if (ellR(x, z, CLEAR[key]) <= 1) { k = K_PLAZA; sn = -10; } }
+    if (k < 0 && Math.abs(x - STAGE.x) <= STAGE.hx && Math.abs(z - STAGE.z) <= STAGE.hz) { k = K_PLAZA; sn = -12; }
+    if (k < 0 && Math.abs(x - QUADRA.x) <= QUADRA.hx + 2 && Math.abs(z - QUADRA.z) <= QUADRA.hz + 2) { k = K_PLAZA; sn = -11; }
+    if (k < 0) for (let s = 0; s < STREETS.length; s++) { const S = STREETS[s]; if (polyDist(x, z, S.pts) <= S.hw) { k = S.kind; sn = s; break; } }
+    if (k < 0) for (let s = 0; s < TRAILS.length; s++) if (polyDist(x, z, TRAILS[s].pts) <= 1.5) { k = K_TRAIL; sn = 100 + s; break; }
+    if (k < 0) { for (const key of ['azul', 'A', 'verm', 'cl1', 'cl2']) if (ellR(x, z, CLEAR[key]) <= 1) { k = K_MATA; sn = -20; } }
+    if (k < 0) k = (inPoly(x, z, POLY_LEFT) || inPoly(x, z, POLY_RIGHT)) && adC > CAN_HW + 4 ? K_LOT : K_MATA;
+    K[c] = k; SN[c] = sn;
   }
-  // 2) lotes => casas (lotes em grade irregular; a metade norte espelha a sul)
-  const rows = []; { let z = 1; while (z < MID) { const d = 5 + R() * 4; const z1 = Math.min(MID, z + d); const cols = []; let x = 0; while (x < 128) { const w = 5 + R() * 3.5; cols.push(Math.min(128, x + w)); x += w; } rows.push({ z0: z, z1, cols }); z = z1; } }
-  const westShops = []; { let z = 1; while (z < ML - 1) { const d = 7 + R() * 5; westShops.push(Math.min(ML - 1, z + d)); z += d; } }
-  const plotOf = (x, z) => {
-    if (x < aveX(z) - AVE_HW - SIDEW) { let k = 0; while (westShops[k] < z) k++; return 100000 + k; }
-    const zf = foldZ(z); let r = 0; while (r < rows.length - 1 && rows[r].z1 < zf) r++; const row = rows[r]; let cI = 0; while (cI < row.cols.length - 1 && row.cols[cI] < x) cI++; return (r * 64 + cI) * 2 + (z > MID ? 1 : 0);
-  };
+  // 1b) construções 3D: procura lotes livres de frente para uma rua (a frente do modelo, +z local, aponta para a rua)
+  const models = [];
+  { const isLot = c => K[c] === K_LOT, isRoad = c => K[c] === K_STREET || K[c] === K_BECO || K[c] === K_PLAZA || K[c] === K_WALK;
+    const cand = []; for (let j = 4; j < GZ - 4; j += 3) for (let i = 4; i < GX - 4; i += 3) if (isLot(idx(i, j))) cand.push([i, j]);
+    const RR = mulberry(seed + 555); for (let k = cand.length - 1; k > 0; k--) { const q = Math.floor(RR() * (k + 1)); const t = cand[k]; cand[k] = cand[q]; cand[q] = t; }
+    const order = []; for (const D of MODEL_DEFS) for (let n = 0; n < MODEL_COUNT[D.name]; n++) order.push(D);
+    for (const D of order) {
+      let done = false;
+      for (const [i0, j0] of cand) { if (done) break;
+        for (let rot = 0; rot < 4 && !done; rot++) {
+          const fw = (rot % 2 ? D.d : D.w) + 0.6, fd = (rot % 2 ? D.w : D.d) + 0.6, ci = Math.ceil(fw / CELL), cj = Math.ceil(fd / CELL);
+          if (i0 + ci >= GX - 2 || j0 + cj >= GZ - 2) continue;
+          let ok = true; for (let j = j0; j < j0 + cj && ok; j++) for (let i = i0; i < i0 + ci; i++) if (!isLot(idx(i, j))) { ok = false; break; }
+          if (!ok) continue;
+          // lado da frente: rot 0 = +z (norte), 1 = +x, 2 = -z, 3 = -x — precisa haver rua encostada
+          let front = 0; for (let t = 0; t < (rot % 2 ? cj : ci); t++) { const c = rot === 0 ? idx(i0 + t, j0 + cj) : rot === 2 ? idx(i0 + t, j0 - 1) : rot === 1 ? idx(i0 + ci, j0 + t) : idx(i0 - 1, j0 + t); if (isRoad(c)) front++; }
+          if (front < (rot % 2 ? cj : ci) * 0.5) continue;
+          const x = (i0 + ci / 2) * CELL, z = (j0 + cj / 2) * CELL;
+          if (models.some(m => Math.hypot(m.x - x, m.z - z) < (m.name === D.name ? 18 : 9))) continue;
+          let gmin = 1e9; for (let j = j0; j < j0 + cj; j++) for (let i = i0; i < i0 + ci; i++) gmin = Math.min(gmin, terrain((i + 0.5) * CELL, (j + 0.5) * CELL));
+          const y = Math.max(0, gmin - 0.15);
+          for (let j = j0; j < j0 + cj; j++) for (let i = i0; i < i0 + ci; i++) { const c = idx(i, j); K[c] = K_BLOCK; M[c] = B_MODEL; HV[c] = terrain((i + 0.5) * CELL, (j + 0.5) * CELL); H[c] = y + D.h; }
+          models.push({ name: D.name, x, z, y, rot, i0, j0, ci, cj }); done = true; } } } }
+  // 2) lotes => casas (lotes em grade irregular)
+  const LOT_W = 6, LOT_D = 7; // casas organizadas em quadras: lotes regulares de 6 x 7 m
+  const plotOf = (x, z) => Math.floor(z / LOT_D) * 1000 + Math.floor(x / LOT_W);
   // componentes conectados por lote
   const houses = []; const comp = new Int32Array(NC).fill(-1); const stack = [];
   for (let c = 0; c < NC; c++) {
@@ -125,44 +202,43 @@ function buildMap(seed) {
     houses.push({ id: houses.length, plot: pid, cells, shop: pid >= 100000 });
   }
   // sobras minúsculas viram calçada/beco
-  for (const h of houses) if (h.cells.length < 6 && !h.shop) { for (const c of h.cells) { K[c] = K_BECO; comp[c] = -1; } h.dead = true; }
+  for (const h of houses) if (h.cells.length < 10) { for (const c of h.cells) { K[c] = K_BLOCK; M[c] = B_MURO; comp[c] = -1; } h.dead = true; } // sobras viram muro, nunca bolsão
   // 3) alturas do chão
-  const escH = x => { // perfil do escadão: lances retos (degraus de 0,5 m) entre patamares planos
-    const pts = [{ x: ESC_X0 - 0.5, h: 0, hx: 0 }].concat(LAND);
-    for (let p = 1; p < pts.length; p++) if (x <= pts[p].x + pts[p].hx) {
-      if (x >= pts[p].x - pts[p].hx) return pts[p].h;
-      const a = pts[p - 1], b = pts[p], xa = a.x + a.hx, xb = b.x - b.hx, n = Math.max(1, Math.round((xb - xa) / CELL)), k = clamp(Math.floor((x - xa) / CELL), 0, n - 1);
-      return a.h + (b.h - a.h) * (k + 1) / (n + 1);
-    }
-    return pts[pts.length - 1].h;
-  };
-  ESC_LAND = LAND.map(l => ({ x: l.x, hx: l.hx, hz: l.hz, h: l.h })); PRACA.h = 0;
   for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) {
     const c = idx(i, j), x = (i + 0.5) * CELL, z = (j + 0.5) * CELL, g = terrain(x, z), k = K[c];
+    if (k === K_BLOCK && M[c] === B_MODEL) continue;
     if (k === K_AVE) H[c] = 0; else if (k === K_WALK) H[c] = 0.15;
-    else if (k === K_ESC) H[c] = escH(x);
-    else if (SN[c] === -5) H[c] = WALK_H;
-    else if (k === K_BECO) H[c] = Math.round(g / 0.3) * 0.3;
-    else if (k === K_PLAZA) H[c] = Math.abs(z - MID) <= PRACA.hz + 0.1 && x <= PRACA.x1 + 0.1 ? 0 : Math.round(g / 0.4) * 0.4;
+    else if (k === K_ESC) H[c] = escAt(x, z).h;
+    else if (SN[c] === -5 || SN[c] === -6) H[c] = WALK_H;
+    else if (SN[c] === -7) H[c] = Math.min(g, 1.5) * sm(3, 9, Math.abs(polySide(x, z, AVE_PTS)));
+    else if (SN[c] === -11) H[c] = QUADRA.h;
+    else if (SN[c] === -12) H[c] = STAGE.h;
+    else if (k === K_PLAZA) H[c] = g;
+    else if (k === K_BECO) H[c] = g;
     else H[c] = g;
   }
+  // arquibancada (3 degraus) no lado sul da quadra e degraus do palco
+  for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) { const c = idx(i, j), x = (i + 0.5) * CELL, z = (j + 0.5) * CELL;
+    if (SN[c] === -11 && Math.abs(x - QUADRA.x) <= QUADRA.hx - 3 && Math.abs(x - QUADRA.x) >= 3 && z < QUADRA.z - QUADRA.hz) { const row = Math.floor((QUADRA.z - QUADRA.hz - z) / 0.7); H[c] = QUADRA.h + 0.42 * Math.min(3, row + 1); }
+    if (SN[c] === -11 && Math.abs(x - STAGE.x) <= 2.5 && z > QUADRA.z + QUADRA.hz && z < STAGE.z - STAGE.hz) H[c] = QUADRA.h + Math.min(0.75, 0.25 * Math.ceil((z - (QUADRA.z + QUADRA.hz)) / 0.5)); }
   // 4) suaviza junções de ruas para nunca exceder o degrau
-  const isGround = k => k === K_STREET || k === K_BECO || k === K_PLAZA || k === K_WALK || k === K_AVE || k === K_ESC;
-  for (let it = 0; it < 60; it++) { let ch = 0;
-    for (let c = 0; c < NC; c++) { const k = K[c]; if (!isGround(k) || k === K_ESC || k === K_AVE || k === K_WALK || SN[c] === -5) continue; const i = c % GX, j = (c / GX) | 0;
-      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ni = i + di, nj = j + dj; if (ni < 0 || nj < 0 || ni >= GX || nj >= GZ) continue; const n = idx(ni, nj); if (!isGround(K[n])) continue; const d = H[c] - H[n];
+  const isGround = k => k === K_STREET || k === K_BECO || k === K_PLAZA || k === K_WALK || k === K_AVE || k === K_ESC || k === K_TRAIL;
+  const fixed = c => K[c] === K_ESC || K[c] === K_AVE || K[c] === K_WALK || SN[c] === -5 || SN[c] === -6 || SN[c] === -11 || SN[c] === -12;
+  for (let it = 0; it < 80; it++) { let ch = 0;
+    for (let c = 0; c < NC; c++) { const k = K[c]; if (!isGround(k) || fixed(c)) continue; const i = c % GX, j = (c / GX) | 0;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ni = i + di, nj = j + dj; if (ni < 0 || nj < 0 || ni >= GX || nj >= GZ) continue; const n = idx(ni, nj); if (!isGround(K[n]) || SN[n] === -11 || SN[n] === -12) continue; const d = H[c] - H[n];
         if (d > 0.42) { H[c] = H[n] + 0.42; ch++; } else if (d < -0.42) { H[c] = H[n] - 0.42; ch++; } } }
     if (!ch) break; }
   // 5) casas: andares, lajes acessíveis e escadas externas
-  const prng = p => mulberry(seed * 7 + (p >> 1) * 131 + 17);   // mesmo número para casa e espelho
+  const prng = p => mulberry(seed * 7 + p * 131 + 17);
   const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   for (const h of houses) {
-    if (h.dead) continue; const pr = prng(h.shop ? h.plot * 2 : h.plot); const hr = mulberry(seed * 13 + h.id * 7919);
+    if (h.dead) continue; const pr = prng(h.plot); const hr = mulberry(seed * 13 + h.id * 7919);
     let gmin = 1e9, gmax = -1e9; for (const c of h.cells) { gmin = Math.min(gmin, H[c]); gmax = Math.max(gmax, H[c]); }
     const fr = pr(); const floors = h.shop ? 1 + Math.floor(pr() * 3) : fr < 0.2 ? 1 : fr < 0.55 ? 2 : fr < 0.85 ? 3 : 4;
-    let top = (h.shop ? 0.15 : gmax) + floors * 2.9 + 0.25;
+    let top = gmax + floors * 2.9 + 0.25;
     let sMax = -1e9; const edge = [];
-    for (const c of h.cells) { const i = c % GX, j = (c / GX) | 0; for (let d = 0; d < 4; d++) { const ni = i + DIRS4[d][0], nj = j + DIRS4[d][1]; if (ni < 0 || nj < 0 || ni >= GX || nj >= GZ) continue; const n = idx(ni, nj); if (isGround(K[n]) && K[n] !== K_AVE) { sMax = Math.max(sMax, H[n]); edge.push({ c, n, d }); } } }
+    for (const c of h.cells) { const i = c % GX, j = (c / GX) | 0; for (let d = 0; d < 4; d++) { const ni = i + DIRS4[d][0], nj = j + DIRS4[d][1]; if (ni < 0 || nj < 0 || ni >= GX || nj >= GZ) continue; const n = idx(ni, nj); if (isGround(K[n]) && K[n] !== K_AVE && K[n] !== K_MATA) { sMax = Math.max(sMax, H[n]); edge.push({ c, n, d }); } } }
     h.gmin = gmin; h.floors = floors; h.access = 0;
     if (!h.shop && pr() < 0.62 && sMax - gmin >= 2.5 && sMax >= gmax - 0.8) { top = sMax; h.access = 1; }
     h.top = Math.round(top * 20) / 20;
@@ -170,19 +246,9 @@ function buildMap(seed) {
     h.edge = edge; h.pr = pr;
     for (const c of h.cells) { K[c] = K_ROOF; H[c] = h.top; HID[c] = h.id; }
   }
-  // paredão do grafite: casas dos dois lados do 2º lance do escadão ficam altas
-  for (const h of houses) {
-    if (h.dead || h.shop) continue; let need = -1;
-    for (const c of h.cells) { const i = c % GX, j = (c / GX) | 0, x = (i + 0.5) * CELL, z = (j + 0.5) * CELL, dz = Math.abs(z - MID);
-      if (x >= ESC_X0 && x <= ESC_X0 + 1.5 && dz > ESC_HW && dz <= PRACA.hz + 0.5) need = Math.max(need, 6.6);            // fachadas de frente para a praça (grafite)
-      if (x >= LAND[0].x + LAND[0].hx && x <= LAND[0].x + LAND[0].hx + 1 && dz > ESC_HW && dz <= LAND[0].hz) need = Math.max(need, LAND[0].h + 2.9); // bandeiras do 1º patamar
-      if (x >= 69.5 && x <= 76 && (j === 286 || j === 273)) need = Math.max(need, escH(76) + 3.4); }
-    if (need > 0 && h.top < need) { h.top = Math.round(need * 20) / 20; h.access = 0; for (const c of h.cells) H[c] = h.top; }
-    if (need > 0) h.mural = true;
-  }
   // escadas externas para lajes (passagens às lajes)
   for (const h of houses) {
-    if (h.dead || h.shop || h.access || h.mural || h.pr() > 0.6) continue;
+    if (h.dead || h.access || h.pr() > 0.6) continue;
     const runs = new Map();
     for (const e of h.edge) { const i = e.c % GX, j = (e.c / GX) | 0; const key = e.d + ':' + (e.d < 2 ? i : j); if (!runs.has(key)) runs.set(key, []); runs.get(key).push(e); }
     let best = null;
@@ -205,71 +271,95 @@ function buildMap(seed) {
   }
   // 6) blocos: caixas-d'água nas lajes (servem de cobertura)
   for (const h of houses) {
-    if (h.dead || h.shop || h.style.tank > 0.55) continue;
+    if (h.dead || h.style.tank > 0.55) continue;
     const set = new Set(h.cells.filter(c => K[c] === K_ROOF));
     const inner = h.cells.filter(c => { if (!set.has(c)) return false; const i = c % GX, j = (c / GX) | 0; for (let a = -2; a <= 3; a++) for (let b = -2; b <= 3; b++) { if (!set.has(idx(i + a, j + b))) return false; } return true; });
     if (!inner.length) continue;
     const c = inner[Math.floor(h.style.tank * 997) % inner.length], i = c % GX, j = (c / GX) | 0;
     for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const q = idx(i + a, j + b); K[q] = K_BLOCK; M[q] = h.style.tank < 0.3 ? B_TANK : B_TANK2; H[q] = h.top + 1.15; HV[q] = H[q]; }
   }
-  for (let c = 0; c < NC; c++) { if (K[c] === K_BLOCK && M[c] === B_MURO) H[c] = 2.2; if (K[c] === K_BLOCK && M[c] === B_GUARD) H[c] = terrain(((c % GX) + 0.5) * CELL, ((c / GX | 0) + 0.5) * CELL) + 1.1; if (K[c] === K_BLOCK && M[c] === B_WALL) { const x = ((c % GX) + 0.5) * CELL, z = ((c / GX | 0) + 0.5) * CELL; H[c] = Math.max(5.5, terrain(x, clamp(z, 1.5, 158.5)) + 4.5); } if (K[c] === K_VOID) H[c] = ((c % GX) + 0.5) * CELL > WALK_X1 ? -1.2 : terrain(((c % GX) + 0.5) * CELL, ((c / GX | 0) + 0.5) * CELL); }
-  const cover = (x0, z0, x1, z1, mat, hgt) => { for (const mz of [false, true]) for (let j = Math.floor((mz ? ML - z1 : z0) / CELL); j < Math.ceil((mz ? ML - z0 : z1) / CELL); j++) for (let i = Math.floor(x0 / CELL); i < Math.ceil(x1 / CELL); i++) { const c = idx(i, j); if (!WALKABLE[K[c]]) continue; const base = H[c]; K[c] = K_BLOCK; M[c] = mat; H[c] = base + hgt; } };
-  cover(LAND[0].x - 1, MID - 5.5, LAND[0].x, MID - 4.5, B_SAND, 1.0);                       // sacos de areia no 1º patamar
-  cover(38, MID - 9, 39, MID - 8, B_BRICKS, 1.15); cover(52, MID - 9, 53, MID - 8, B_BRICKS, 1.15); cover(44, MID - 4, 45.5, MID - 3.5, B_JERSEY, 1.0); // praça
-  for (const zb of [30, 55, 80, 105, 125]) cover(130.5, zb, 131, zb + 0.5, B_BARREL, 1.0);  // barris na beira do valão
-  cover(127, 70, 128, 70.5, B_SAND, 0.9); cover(127, 116, 128, 116.5, B_SAND, 0.9);
-  cover(56, 12, 60, 12.5, B_JERSEY, 1.0); cover(90, 12, 94, 12.5, B_JERSEY, 1.0); cover(72, 15, 73, 15.5, B_BRICKS, 1.1); // cobertura nas bases
-  cover(SUPPLY[0].x - 0.75, 2.5, SUPPLY[0].x + 0.75, 3.0, B_SUPPLY, 1.0);          // caixas de munição nas bases principais
-  for (let c = 0; c < NC; c++) HV[c] = (K[c] === K_BLOCK && M[c] === B_SUPPLY) ? H[c] - 1.0 : H[c];
-  const map = { K, H, HV, M, HID, SN, houses, idx, decor: [], poles: [], cars: [], lamps: [], seed, x0Esc };
+  // 7) mata: árvores (troncos com colisão, copas que tapam a visão), pedras e arbustos
+  const trees = [], rocks = [], bushes = [];
+  const nearPath = (x, z, r) => { for (let a = -r; a <= r; a += CELL) for (let b = -r; b <= r; b += CELL) { const i = Math.floor((x + a) / CELL), j = Math.floor((z + b) / CELL); if (i < 0 || j < 0 || i >= GX || j >= GZ) continue; const k = K[idx(i, j)]; if (k !== K_MATA && k !== K_LOT && k !== K_ROOF) return true; } return false; };
+  for (let gz = 2; gz < ML - 2; gz += 4.2) for (let gx = 2; gx < MW - 2; gx += 4.2) {
+    const x = gx + (h2(gx * 7 | 0, gz * 7 | 0, 1) - 0.5) * 3, z = gz + (h2(gx * 7 | 0, gz * 7 | 0, 2) - 0.5) * 3, i = Math.floor(x / CELL), j = Math.floor(z / CELL), c = idx(i, j);
+    if (K[c] !== K_MATA || SN[c] === -20) continue;
+    const r = h2(i, j, 3); if (r < 0.12) continue;
+    if (nearPath(x, z, r < 0.25 ? 1.0 : 2.2)) { if (!nearPath(x, z, 1.0) && r > 0.6) bushes.push({ x, z, y: H[c], s: 0.6 + r * 0.6 }); continue; }
+    if (r < 0.2) { rocks.push({ x, z, y: H[c], s: 0.8 + h2(i, j, 4) * 1.0 }); for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const q = idx(i + a, j + b); if (K[q] === K_MATA) { K[q] = K_BLOCK; M[q] = B_ROCK; HV[q] = H[q]; H[q] = H[q] + 0.9 + h2(i, j, 5) * 0.8; } } continue; }
+    const palm = h2(i, j, 6) < 0.3, tall = 5 + h2(i, j, 7) * 7, cr = palm ? 2.2 : 2.4 + h2(i, j, 8) * 1.6;
+    trees.push({ x: (i + 0.5) * CELL, z: (j + 0.5) * CELL, y: H[c], h: tall, r: cr, palm });
+    K[c] = K_BLOCK; M[c] = B_INVIS; HV[c] = H[c]; const g0 = H[c]; H[c] = g0 + Math.min(tall, 3.2);
+    for (let a = -cr; a <= cr; a += CELL) for (let b = -cr; b <= cr; b += CELL) { if (a * a + b * b > cr * cr) continue; const ii = Math.floor((x + a) / CELL), jj = Math.floor((z + b) / CELL); if (ii < 0 || jj < 0 || ii >= GX || jj >= GZ) continue; const q = idx(ii, jj);
+      const top = g0 + tall + 0.6, bot = g0 + (palm ? tall - 1.2 : Math.max(2.2, tall * 0.4)); if (top > CT[q]) { CT[q] = top; CB[q] = CB[q] ? Math.min(CB[q], bot) : bot; } }
+    if (h2(i, j, 9) < 0.5) bushes.push({ x: x + 1.2, z: z - 0.8, y: g0, s: 0.5 + h2(i, j, 10) * 0.5 });
+  }
+  for (let c = 0; c < NC; c++) { const x = ((c % GX) + 0.5) * CELL, z = ((c / GX | 0) + 0.5) * CELL;
+    if (K[c] === K_BLOCK && M[c] === B_GUARD) H[c] = WALK_H + 0.95;
+    if (K[c] === K_BLOCK && M[c] === B_MURO) H[c] = 2.2;
+    if (K[c] === K_BLOCK && M[c] === B_JERSEY && (x < 0.8 || x > MW - 0.8 || z < 0.8 || z > ML - 0.8)) H[c] = 0.15 + 0.9;
+    if (K[c] === K_BLOCK && M[c] === B_ROCK && HV[c] === 0 && H[c] === 0) H[c] = terrain(x, z) + 6;
+    if (K[c] === K_VOID) H[c] = -1.5; }
+  const cover = (x0, z0, x1, z1, mat, hgt) => { for (let j = Math.floor(z0 / CELL); j < Math.ceil(z1 / CELL); j++) for (let i = Math.floor(x0 / CELL); i < Math.ceil(x1 / CELL); i++) { const c = idx(i, j); if (!WALKABLE[K[c]]) continue; const base = H[c]; K[c] = K_BLOCK; M[c] = mat; H[c] = base + hgt; } };
+  // cobertura e objetos das bases (poucas construções: caixas e barris)
+  const Cz = k => CLEAR[k].c;
+  for (const k of ['azul', 'verm']) { const [cx, cz] = Cz(k); cover(cx - 9, cz - 3, cx - 7.5, cz - 1.5, B_BRICKS, 1.1); cover(cx + 7, cz + 1, cx + 8.5, cz + 2.5, B_BARREL, 1.0); cover(cx + 2, cz - 6, cx + 5, cz - 5.5, B_JERSEY, 1.0); }
+  { const [cx, cz] = Cz('A'); cover(cx - 6, cz - 2, cx - 4.5, cz - 0.5, B_BRICKS, 1.1); cover(cx + 4.5, cz + 0.5, cx + 6, cz + 2, B_BRICKS, 1.1); cover(cx - 1, cz + 5, cx + 1.5, cz + 5.5, B_SAND, 0.9); cover(cx + 1, cz - 6, cx + 3.5, cz - 5.5, B_SAND, 0.9); }
+  { const [cx, cz] = Cz('praca'); cover(cx - 7, cz - 3, cx - 6, cz - 2, B_BRICKS, 1.15); cover(cx + 6, cz + 2, cx + 7, cz + 3, B_BRICKS, 1.15); cover(cx - 1, cz - 6.5, cx + 1.5, cz - 6, B_JERSEY, 1.0); }
+  { const [cx, cz] = Cz('C'); cover(cx - 4.5, cz + 2, cx - 3.5, cz + 3, B_BARREL, 1.0); cover(cx + 3, cz - 3, cx + 4.5, cz - 2.5, B_SAND, 0.9); }
+  for (const t of [0, 1]) { const s = SUPPLY[t]; cover(s.x - 0.75, s.z + 0.6, s.x + 0.75, s.z + 1.1, B_SUPPLY, 1.0); }
+  // alambrado da quadra (lados leste e oeste, com portões)
+  for (let j = 0; j < GZ; j++) for (const xs of [QUADRA.x - QUADRA.hx - 1.75, QUADRA.x + QUADRA.hx + 1.75]) { const z = (j + 0.5) * CELL; if (Math.abs(z - QUADRA.z) > QUADRA.hz + 1.5 || Math.abs(z - QUADRA.z) < 2.2) continue; const c = idx(Math.floor(xs / CELL), j); if (K[c] === K_PLAZA) { K[c] = K_BLOCK; M[c] = B_FENCE; HV[c] = H[c]; H[c] += 3.2; } }
+  for (let c = 0; c < NC; c++) HV[c] = (K[c] === K_BLOCK && M[c] === B_SUPPLY) ? H[c] - 1.0 : (K[c] === K_BLOCK && (M[c] === B_INVIS || M[c] === B_FENCE || M[c] === B_MODEL)) ? HV[c] : H[c];
+  ESC_LAND = ESC.lands.map(l => ({ x: (l.x0 + l.x1) / 2, z: (l.z0 + l.z1) / 2, hx: (l.x1 - l.x0) / 2, hz: (l.z1 - l.z0) / 2, h: l.h }));
+  const map = { K, H, HV, M, HID, SN, CT, CB, houses, idx, decor: [], poles: [], cars: [], lamps: [], trees, rocks, bushes, models, seed, x0Esc: ESC_X0 };
   placeProps(map, R);
   return map;
 }
 
-// postes, carros estacionados e outros objetos com colisão
+// postes (avenida, ruas, praças, quadra e bases) e outros objetos
 function placeProps(map, R) {
   const { K, H, HV, M, idx } = map;
-  const blockAt = (x0, z0, x1, z1, top) => { const cells = []; for (let j = Math.floor(z0 / CELL); j <= Math.floor((z1 - 1e-3) / CELL); j++) for (let i = Math.floor(x0 / CELL); i <= Math.floor((x1 - 1e-3) / CELL); i++) { if (i < 0 || j < 0 || i >= GX || j >= GZ) continue; const c = idx(i, j); cells.push(c); } return cells; };
-  // carros estacionados nas duas faixas de estacionamento da avenida
-  const CAR_COL = [[0.85, 0.85, 0.82], [0.2, 0.22, 0.25], [0.62, 0.1, 0.1], [0.75, 0.75, 0.78], [0.15, 0.3, 0.55], [0.9, 0.75, 0.2], [0.3, 0.45, 0.3], [0.95, 0.95, 0.95]];
-  // ônibus parados e barreiras de concreto (New Jersey) na entrada do escadão
-  for (const zc of [70, ML - 70]) { const ax = aveX(zc), xc = ax + PARK_X, cells = blockAt(xc - 1.25, zc - 5.5, xc + 1.25, zc + 5.5);
-    if (cells.every(c => K[c] === K_AVE)) { for (const c of cells) { K[c] = K_BLOCK; M[c] = B_INVIS; HV[c] = 0; H[c] = 3.0; } map.cars.push({ x: xc, z: zc, bus: true, col: [0.2, 0.45, 0.85] }); } }
-  for (const side of [-1, 1]) { let z = 6 + R() * 4; while (z < ML - 8) {
-      if (Math.abs(z + 2.2 - MID) < 16) { z += 6; continue; }
-      if (R() < 0.62) { const zc = z + 2.2, ax = aveX(zc), xc = ax + side * PARK_X; const cells = blockAt(xc - 0.9, zc - 2.1, xc + 0.9, zc + 2.1);
-        if (cells.every(c => K[c] === K_AVE)) { for (const c of cells) { K[c] = K_BLOCK; M[c] = B_INVIS; HV[c] = 0; H[c] = 1.45; } map.cars.push({ x: xc, z: zc, rot: side > 0 ? 0 : Math.PI, col: CAR_COL[Math.floor(R() * CAR_COL.length)], van: R() < 0.2 }); } }
-      z += 5.5 + R() * 4; } }
-  // árvores na calçada oeste
-  map.trees = [];
-  { let z = 8 + R() * 5; while (z < ML - 8) { const x = aveX(z) - AVE_HW - 1.6, c = idx(Math.floor(x / CELL), Math.floor(z / CELL)); if (K[c] === K_WALK) { K[c] = K_BLOCK; M[c] = B_INVIS; HV[c] = H[c]; H[c] = 3.2; map.trees.push({ x: (Math.floor(x / CELL) + 0.5) * CELL, z: (Math.floor(z / CELL) + 0.5) * CELL, s: 0.8 + R() * 0.5 }); } z += 9 + R() * 8; } }
-  // postes ao longo das ruas mais largas
-  const isStreetC = c => K[c] === K_STREET || K[c] === K_WALK;
-  const taken = [];
+  map.trees = map.trees || [];
+  // iluminação pública da avenida: um poste a cada ~22 m, alternando os lados
+  let s = 0, k = 0; const L = AVE_PTS;
+  for (let p = 0; p < L.length - 1; p++) { const a = L[p], b = L[p + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]), tx = (b[0] - a[0]) / len, tz = (b[1] - a[1]) / len;
+    for (; s < len; s += 22) { const side = k++ % 2 ? 1 : -1, x = a[0] + tx * s + tz * side * (AVE_HW + 1.2) * -1, z = a[1] + tz * s - tx * side * (AVE_HW + 1.2) * -1; if (x < 2 || z < 2 || x > MW - 2 || z > ML - 2) continue;
+      const i = Math.floor(x / CELL), j = Math.floor(z / CELL), c = idx(i, j); if (K[c] !== K_WALK) continue; K[c] = K_BLOCK; M[c] = B_INVIS; HV[c] = H[c]; const base = H[c]; H[c] = base + 7.5; map.poles.push({ x: (i + 0.5) * CELL, z: (j + 0.5) * CELL, base, ave: true, dir: [-tz * side * -1, tx * side * -1] }); }
+    s -= len; }
+  // postes ao longo das ruas
+  const isStreetC = c => K[c] === K_STREET || K[c] === K_BECO;
+  const taken = map.poles.map(p => ({ x: p.x, z: p.z }));
   for (let j = 2; j < GZ - 2; j++) for (let i = 2; i < GX - 2; i++) {
-    const c = idx(i, j); if (!isStreetC(c)) continue; const x = (i + 0.5) * CELL, z = (j + 0.5) * CELL;
-    if (K[c] === K_WALK && !(x > aveX(z) + AVE_HW)) continue;
+    const c = idx(i, j); if (!isStreetC(c) || map.SN[c] < 0) continue; const x = (i + 0.5) * CELL, z = (j + 0.5) * CELL;
     let wallN = 0; for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const n = idx(i + a, j + b); if (K[n] === K_ROOF || (K[n] === K_BLOCK && M[n] !== B_INVIS)) wallN++; }
     if (wallN !== 1) continue;
-    // a rua precisa ficar com pelo menos 2,5 m livres
-    let free = 0; for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { let s = 0; for (let q = 1; q <= 6; q++) { const n = idx(i + a * q, j + b * q); if (WALKABLE[K[n]]) s++; else break; } free = Math.max(free, s); }
-    if (free < 5) continue;
-    if (taken.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < (K[c] === K_WALK ? 196 : 121))) continue;
-    if (h2(i, j, 5) < 0.35) continue;
-    const ave = K[c] === K_WALK; taken.push({ x, z }); K[c] = K_BLOCK; M[c] = B_INVIS; HV[c] = H[c]; const base = H[c]; H[c] = base + 7.5; map.poles.push({ x, z, base, ave });
+    let free = 0; for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { let q = 0; for (let t = 1; t <= 6; t++) { const n = idx(i + a * t, j + b * t); if (WALKABLE[K[n]]) q++; else break; } free = Math.max(free, q); }
+    if (free < 4) continue;
+    if (taken.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < 150)) continue;
+    if (h2(i, j, 5) < 0.3) continue;
+    taken.push({ x, z }); K[c] = K_BLOCK; M[c] = B_INVIS; HV[c] = H[c]; const base = H[c]; H[c] = base + 7.5; map.poles.push({ x, z, base, ave: false });
   }
+  // pontos de luz extra (praças, bases, quadra) — usados pela iluminação noturna
+  map.lights = [];
+  for (const p of map.poles) map.lights.push({ x: p.x + (p.dir ? p.dir[0] * 1.6 : 0), y: p.base + 7.1, z: p.z + (p.dir ? p.dir[1] * 1.6 : 0), r: p.ave ? 17 : 14, i: 1.15 });
+  for (const kk of ['azul', 'A', 'verm', 'praca', 'C']) { const C = CLEAR[kk]; for (const [dx, dz] of [[-0.7, -0.6], [0.7, 0.6]]) map.lights.push({ x: C.c[0] + dx * C.rx, y: C.h + 6, z: C.c[1] + dz * C.rz, r: 17, i: 1.1, mast: true }); }
+  for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) map.lights.push({ x: QUADRA.x + dx * (QUADRA.hx + 1), y: QUADRA.h + 9, z: QUADRA.z + dz * (QUADRA.hz + 1), r: 27, i: 1.9, tower: true });
 }
 
 // ---------- colisão, raios e navegação ----------
 function makeWorld(map) {
-  const { K, H } = map;
+  const { K, H } = map; const CT = map.CT, CB = map.CB;
   const blockedAt = (x, z) => { const i = Math.floor(x / CELL), j = Math.floor(z / CELL); if (i < 0 || j < 0 || i >= GX || j >= GZ) return true; return !WALKABLE[K[j * GX + i]]; };
   const hCell = (x, z) => { const i = Math.floor(x / CELL), j = Math.floor(z / CELL); if (i < 0 || j < 0 || i >= GX || j >= GZ) return 99; return H[j * GX + i]; };
   const OFF = [-1, 0, 1];
   // obstáculos móveis (carros) ficam em this.dyn: cada sala tem a sua lista (veja fork())
+  // obstáculos móveis (carros): caixas orientadas {x, z, fx, fz (frente), hl, hw, top}
   function fitsD(dyn, x, z, feet, r) { for (const a of OFF) for (const b of OFF) { const px = x + a * r, pz = z + b * r; if (blockedAt(px, pz)) return false; if (hCell(px, pz) > feet + STEP_UP) return false; }
-    for (const d of dyn) if (x + r > d.x0 && x - r < d.x1 && z + r > d.z0 && z - r < d.z1 && d.top > feet + STEP_UP) return false; return true; }
-  function rayDyn(ox, oy, oz, dx, dy, dz, maxT) { let best = maxT; for (const d of this.dyn) { let t0 = 0, t1 = best; for (const [o, v, lo, hi] of [[ox, dx, d.x0, d.x1], [oy, dy, 0.25, d.top], [oz, dz, d.z0, d.z1]]) { if (Math.abs(v) < 1e-9) { if (o < lo || o > hi) { t0 = 1; t1 = 0; break; } continue; } let a = (lo - o) / v, b = (hi - o) / v; if (a > b) { const q = a; a = b; b = q; } t0 = Math.max(t0, a); t1 = Math.min(t1, b); if (t0 > t1) break; } if (t0 <= t1 && t0 < best) best = t0; } return best; }
+    for (const d of dyn) { const dx = x - d.x, dz = z - d.z, al = dx * d.fx + dz * d.fz, la = -dx * d.fz + dz * d.fx; if (Math.abs(al) < d.hl + r && Math.abs(la) < d.hw + r && d.top > feet + STEP_UP) return false; } return true; }
+  function rayDyn(ox, oy, oz, dx, dy, dz, maxT) { let best = maxT; for (const d of this.dyn) { const rx = ox - d.x, rz = oz - d.z, o1 = rx * d.fx + rz * d.fz, o2 = -rx * d.fz + rz * d.fx, v1 = dx * d.fx + dz * d.fz, v2 = -dx * d.fz + dz * d.fx; let t0 = 0, t1 = best;
+    for (const [o, v, lo, hi] of [[o1, v1, -d.hl, d.hl], [oy, dy, 0.25, d.top], [o2, v2, -d.hw, d.hw]]) { if (Math.abs(v) < 1e-9) { if (o < lo || o > hi) { t0 = 1; t1 = 0; break; } continue; } let a = (lo - o) / v, b = (hi - o) / v; if (a > b) { const q = a; a = b; b = q; } t0 = Math.max(t0, a); t1 = Math.min(t1, b); if (t0 > t1) break; }
+    if (t0 <= t1 && t0 < best) best = t0; } return best; }
   function groundAt(x, z, r) { let g = -99; for (const a of OFF) for (const b of OFF) { const px = x + a * r, pz = z + b * r; if (blockedAt(px, pz)) continue; g = Math.max(g, hCell(px, pz)); } return g; }
   // move um ator (pés em a.y) com deslizamento nas paredes
   function fits(x, z, feet, r) { return fitsD(this.dyn, x, z, feet, r); }
@@ -288,24 +378,27 @@ function makeWorld(map) {
     return hitWall;
   }
   // raio em DDA pela grade: devolve {t, face}
-  function ray(ox, oy, oz, dx, dy, dz, maxT) {
+  // vision=true: as copas das árvores também bloqueiam (usado na percepção, não nas balas)
+  function ray(ox, oy, oz, dx, dy, dz, maxT, vision) {
     let i = Math.floor(ox / CELL), j = Math.floor(oz / CELL);
     const si = dx > 0 ? 1 : -1, sj = dz > 0 ? 1 : -1;
     const tdi = dx ? Math.abs(CELL / dx) : Infinity, tdj = dz ? Math.abs(CELL / dz) : Infinity;
     let tmi = dx ? (dx > 0 ? (i + 1) * CELL - ox : ox - i * CELL) / Math.abs(dx) : Infinity;
     let tmj = dz ? (dz > 0 ? (j + 1) * CELL - oz : oz - j * CELL) / Math.abs(dz) : Infinity;
-    let t0 = 0, face = 0;
+    let t0 = 0, face = 0, leafAcc = 0;
     for (let it = 0; it < 4000; it++) {
       const t1 = Math.min(tmi, tmj, maxT), inside = i >= 0 && j >= 0 && i < GX && j < GZ, h = inside ? H[j * GX + i] : -0.03;
       const ya = oy + dy * t0, yb = oy + dy * t1;
       if (ya <= h) return { t: t0, face, i, j };
       if (yb <= h) return { t: (h - oy) / dy, face: 0, i, j };
+      // mata densa: depois de ~7 m dentro da vegetação (copas e mato baixo) a visão é bloqueada
+      if (vision && inside) { const c = j * GX + i, top = CT[c]; if (top > 0) { const lo = Math.min(ya, yb), hi = Math.max(ya, yb); if (hi >= 0.5 && lo <= top) { leafAcc += t1 - t0; if (leafAcc > 7) return { t: t0, face: 3, i, j, leaf: true }; } } }
       if (t1 >= maxT) return null;
       if (tmi < tmj) { t0 = tmi; tmi += tdi; i += si; face = 1; } else { t0 = tmj; tmj += tdj; j += sj; face = 2; }
     }
     return null;
   }
-  function los(ax, ay, az, bx, by, bz) { const dx = bx - ax, dy = by - ay, dz = bz - az, d = Math.hypot(dx, dy, dz); if (d < 0.01) return true; const h = ray(ax, ay, az, dx / d, dy / d, dz / d, d); return !h; }
+  function los(ax, ay, az, bx, by, bz) { const dx = bx - ax, dy = by - ay, dz = bz - az, d = Math.hypot(dx, dy, dz); if (d < 0.01) return true; const h = ray(ax, ay, az, dx / d, dy / d, dz / d, d, true); return !h; }
   // navegação
   const OK = new Uint8Array(NC);
   for (let c = 0; c < NC; c++) { if (!WALKABLE[K[c]]) continue; const i = c % GX, j = (c / GX) | 0; if (i < 1 || j < 1 || i >= GX - 1 || j >= GZ - 1) continue; let ok = 1; for (let a = -1; a <= 1 && ok; a++) for (let b = -1; b <= 1; b++) { const n = (j + b) * GX + i + a; if (!WALKABLE[K[n]] || H[n] > H[c] + 0.5) { ok = 0; break; } } OK[c] = ok; }
@@ -350,6 +443,9 @@ const CONFIG = {
   cars: 10,             // carros circulando pela Avenida das Américas
   npcRespawn: 25,
   refill: { time: 3, radius: 2.6, cooldown: 5 },
+  grenade: { start: 2, max: 2, fuse: 2.6, radius: 6.5, damage: 115, speed: 15, cooldown: 1.2 }, // granadas: quantidade e efeito em área
+  dayLength: 20 * 60,    // ciclo completo de dia e noite (segundos reais)
+  dayStart: 0.3,         // hora inicial (0 = meia-noite, 0.25 = 6h, 0.5 = meio-dia, 0.75 = 18h)
   weapons: {
     rifle: { name: 'FUZIL', mag: 30, res: 180, rate: 0.1, body: 27, head: 3.2, spread: 0.005, auto: true, reload: 2.1, range: 160, swap: 0.5 },
     pistol: { name: 'PISTOLA', mag: 15, res: 75, rate: 0.2, body: 21, head: 3.0, spread: 0.004, auto: false, reload: 1.5, range: 120, swap: 0.4 },
@@ -358,12 +454,12 @@ const CONFIG = {
 const TEAM = [{ name: 'Azul', col: [0.18, 0.42, 0.86], css: '#2F7BE0', dark: [0.1, 0.2, 0.45] }, { name: 'Vermelho', col: [0.82, 0.2, 0.16], css: '#D8402F', dark: [0.45, 0.1, 0.08] }];
 const BOT_NAMES = [['Tico', 'Bira', 'Neném', 'Pardal', 'Dentinho'], ['Zóio', 'Formiga', 'Juninho', 'Cabeça', 'Mago']];
 const NPC_NAMES = ['Dona Cida', 'Seu Jorge', 'Tia Lurdes', 'Marquinho', 'Dona Neide', 'Seu Tião', 'Rosinha', 'Vovó Zélia'];
-const DIFF_FPS = { facil: { react: 0.8, err: 0.075, fov: 1.85, turn: 3.6, burst: 3, gap: 0.55 }, normal: { react: 0.5, err: 0.048, fov: 2.1, turn: 5.2, burst: 4, gap: 0.4 }, dificil: { react: 0.3, err: 0.028, fov: 2.3, turn: 7.5, burst: 6, gap: 0.28 } };
+const DIFF_FPS = { facil: { react: 0.95, err: 0.095, fov: 1.8, turn: 3.0, burst: 3, gap: 0.65, spread: 0.026, think: 0.28 }, normal: { react: 0.62, err: 0.062, fov: 2.0, turn: 4.4, burst: 4, gap: 0.45, spread: 0.016, think: 0.2 }, dificil: { react: 0.4, err: 0.04, fov: 2.2, turn: 6.0, burst: 5, gap: 0.33, spread: 0.012, think: 0.15 }, elite: { react: 0.26, err: 0.026, fov: 2.4, turn: 7.8, burst: 6, gap: 0.24, spread: 0.009, think: 0.11, grenade: 2 } };
 const SKIN = [[0.85, 0.66, 0.5], [0.62, 0.44, 0.3], [0.45, 0.3, 0.2], [0.75, 0.55, 0.4], [0.35, 0.24, 0.16]];
 const BASES_DEF = () => [
-  { id: 'A', name: 'Praça Central', x: PRACA.x, z: MID, r: PRACA.r },
-  { id: 'B', name: 'Escadão', x: ESC_LAND[2].x, z: MID, r: 3.0 },
-  { id: 'C', name: 'Canal', x: (WALK_X0 + WALK_X1) / 2, z: MID, r: 2.8 },
+  { id: 'A', name: 'Clareira da Mata', x: CLEAR.A.c[0] + 10, z: CLEAR.A.c[1] - 1, r: 4.6 }, // lado leste da clareira: distância parecida para os dois times
+  { id: 'B', name: 'Praça Central', x: CLEAR.praca.c[0], z: CLEAR.praca.c[1], r: 4.6 },
+  { id: 'C', name: 'Canal', x: CLEAR.C.c[0], z: CLEAR.C.c[1], r: 3.6 },
 ];
 const STATION = team => ({ x: SUPPLY[team].x, z: SUPPLY[team].z });
 
@@ -371,7 +467,7 @@ const STATION = team => ({ x: SUPPLY[team].x, z: SUPPLY[team].z });
 function makeGame(map, W, opts) {
   opts = opts || {};
   const rnd = opts.rng || Math.random;
-  const G = { map, W, t: 0, actors: [], npcs: [], score: [0, 0], over: false, winner: -1, feed: [], fx: { tracers: [], puffs: [], flashes: [] }, events: [], diff: DIFF_FPS[opts.diff] || DIFF_FPS.normal, stats: { unstuck: 0, shots: 0, hits: 0 }, nextId: 1, timeLeft: CONFIG.timeLimit, cfg: CONFIG };
+  const G = { map, W, t: 0, actors: [], npcs: [], score: [0, 0], over: false, winner: -1, feed: [], fx: { tracers: [], puffs: [], flashes: [] }, events: [], diff: DIFF_FPS[opts.diff] || DIFF_FPS.normal, stats: { unstuck: 0, shots: 0, hits: 0 }, nextId: 1, timeLeft: CONFIG.timeLimit, cfg: CONFIG, dayT: opts.dayT != null ? opts.dayT : CONFIG.dayStart };
   // ---------- nascimentos e rede principal de navegação ----------
   // rede principal de navegação: calculada uma vez por mapa e reaproveitada (evita travar o servidor a cada partida)
   if (!W.cache.main) { const hub = W.nearestOK(PRACA.x, PRACA.z, 6); W.cache.main = { reachS: W.reach(hub, false, false), backS: W.reach(hub, false, true) }; }
@@ -379,7 +475,7 @@ function makeGame(map, W, opts) {
   const mainNet = c => reachS[c] && backS[c];
   const nearestMain = (x, z) => { const i0 = Math.floor(x / CELL), j0 = Math.floor(z / CELL); for (let r = 0; r <= 30; r++) for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) { if (Math.max(Math.abs(a), Math.abs(b)) !== r) continue; const i = i0 + a, j = j0 + b; if (i < 0 || j < 0 || i >= GX || j >= GZ) continue; const c = j * GX + i; if (W.OK[c] && mainNet(c)) return c; } return -1; };
   const spawns = [[], []];
-  for (const [team, zc] of [[0, 8], [1, ML - 8]]) for (const x of [44, 52, 60, 68, 84, 92, 100, 108]) { const c = W.nearestOK(x, zc, 6); if (c >= 0 && mainNet(c)) spawns[team].push(c); }
+  for (const [team, key] of [[0, 'azul'], [1, 'verm']]) for (const [fx, fz] of [[-0.6, -0.35], [-0.3, -0.5], [0, -0.55], [0.3, -0.5], [0.6, -0.35], [-0.45, 0.1], [0.45, 0.1], [0, 0.25]]) { const C = CLEAR[key], c = W.nearestOK(C.c[0] + fx * C.rx, C.c[1] + fz * C.rz, 6); if (c >= 0 && mainNet(c)) spawns[team].push(c); }
   G.spawns = spawns; G.mainNet = mainNet;
   // ---------- bases de dominação ----------
   G.bases = BASES_DEF().map(b => { const c = W.nearestOK(b.x, b.z, 6); return Object.assign(b, { h: map.H[c], owner: -1, prog: 0, inside: [0, 0], state: 'neutra', cell: c }); });
@@ -387,21 +483,24 @@ function makeGame(map, W, opts) {
   const goals = [];
   const addGoal = (x, z, w, tag, base) => { const c = W.nearestOK(x, z, 6); if (c >= 0 && mainNet(c)) goals.push({ c, w, tag, base, z: W.cellZ(c) }); };
   G.bases.forEach((b, bi) => { for (const [dx, dz] of [[0, 0], [-1.2, -1.2], [1.2, 1.2], [-1.2, 1.2], [1.2, -1.2]]) addGoal(b.x + dx, b.z + dz, 1, 'base', bi); });
-  for (const l of ESC_LAND) addGoal(l.x, MID, 1.5, 'escadao');
-  for (const S of STREETS) for (const p of S.pts) if (Math.round(p[0]) % 3 === 0) { addGoal(p[0], p[1], 0.45, 'rua'); addGoal(p[0], ML - p[1], 0.45, 'rua'); }
+  for (const l of ESC_LAND) addGoal(l.x, l.z, 1.5, 'escadao');
+  for (const T of TRAILS) for (let q = 0; q < T.pts.length; q += 2) addGoal(T.pts[q][0], T.pts[q][1], 0.6, 'trilha');
+  addGoal(QUADRA.x, QUADRA.z, 1.2, 'quadra'); addGoal(CLEAR.cl1.c[0], CLEAR.cl1.c[1], 0.8, 'clareira'); addGoal(CLEAR.cl2.c[0], CLEAR.cl2.c[1], 0.8, 'clareira');
+  for (const S of STREETS) for (const p of S.pts) if (Math.round(p[0]) % 3 === 0) { addGoal(p[0], p[1], 0.5, 'rua'); }
   for (const h of map.houses) if (!h.dead && h.access && h.cells.length > 8) { const c = h.cells[(h.cells.length / 2) | 0]; if (W.OK[c] && mainNet(c)) goals.push({ c, w: 0.9, tag: 'laje', z: W.cellZ(c) }); }
-  for (const z of [30, 60, 95, 120, 160, 185, 220, 250]) addGoal((WALK_X0 + WALK_X1) / 2, z, 0.6, 'valao');
+  for (const z of [25, 50, 75, 100, 125]) { const x = lineX(CANAL_PTS, z) + CAN_HW + CAN_WALL + BANK_W / 2; addGoal(x, z, 0.6, 'valao'); }
   G.goals = goals;
-  G.stationCell = [0, 1].map(t => W.nearestOK(STATION(t).x, STATION(t).z + (t ? -0.6 : 0.6), 4));
+  G.stationCell = [0, 1].map(t => W.nearestOK(STATION(t).x, STATION(t).z, 4));
   // pontos de caminhada dos civis (avenida, praça, ladeiras) — longe das bases principais
   const farFromBases = c => G.bases.every(b => Math.hypot(W.cellX(c) - b.x, W.cellZ(c) - b.z) > 16);
-  const npcSpots = []; for (const g of goals) if (g.tag === 'rua' && g.z > 30 && g.z < ML - 30 && farFromBases(g.c)) npcSpots.push(g.c);
-  for (let z = 30; z < ML - 30; z += 9) { if (Math.abs(z - MID) < 20) continue; const c = W.nearestOK(aveX(z) + AVE_HW + 1.5, z, 4); if (c >= 0 && mainNet(c)) npcSpots.push(c); }
+  const npcSpots = []; for (const g of goals) if ((g.tag === 'rua' || g.tag === 'quadra') && farFromBases(g.c)) npcSpots.push(g.c);
+  for (let z = 12; z < ML - 12; z += 10) { const c = W.nearestOK(aveX(z) + AVE_HW + 1.0, z, 4); if (c >= 0 && mainNet(c)) npcSpots.push(c); }
   G.npcSpots = npcSpots;
   // ---------- atores ----------
   const loadout = () => ({ rifle: { mag: CONFIG.weapons.rifle.mag, res: CONFIG.weapons.rifle.res }, pistol: { mag: CONFIG.weapons.pistol.mag, res: CONFIG.weapons.pistol.res } });
   const mk = (team, k, ctrl, name, key) => ({ id: G.nextId++, key: key || null, team, ctrl, isBot: ctrl === 'bot', name, x: 0, y: 0, z: 0, vy: 0, onGround: true, yaw: team ? Math.PI : 0, pitch: 0, hp: 100, alive: false, respawnT: 0.3 + k * 0.15, kills: 0, deaths: 0, caps: 0, ammo: loadout(), cur: 'rifle', reloadT: 0, swapT: 0, cd: 0, crouch: false, hurtT: 0, lastHurt: -9, invuln: 0, anim: 0, spd: 0, deathT: 0, skin: SKIN[(k + team * 2) % SKIN.length], spotT: -9, bloom: 0, refillT: 0, refillCd: 0, trig: false, sprinting: false,
-    in: { mx: 0, mz: 0, dx: 0, dy: 0, fire: false, aim: false, jump: false, crouch: false, reload: false, sprint: false, swap: false, use: false },
+    gren: CONFIG.grenade.start, grenCd: 0,
+    in: { mx: 0, mz: 0, dx: 0, dy: 0, fire: false, aim: false, jump: false, crouch: false, reload: false, sprint: false, swap: false, use: false, gren: false },
     ai: ctrl === 'bot' ? { path: null, pi: 0, goal: -1, target: null, react: 0, seenT: -9, last: null, strafe: 1, strafeT: 0, stuckT: 0, lx: 0, lz: 0, stuck: 0, burst: 0, burstGap: 0, ex: 0, ey: 0, holdT: 0, lookYaw: 0, heard: null, think: rnd() * 0.2, wantPath: false, fail: 0, mode: 'roam', track: 0 } : null });
   G.mk = mk;
   if (opts.humans) { for (const h of opts.humans) G.actors.push(mk(h.team, G.actors.length, opts.local ? 'local' : 'remote', h.name, h.key)); }
@@ -414,19 +513,28 @@ function makeGame(map, W, opts) {
   // carros circulando: mão dupla na Avenida das Américas; param para pedestres e para o carro da frente
   const CAR_COL = [[0.85, 0.85, 0.82], [0.2, 0.22, 0.25], [0.62, 0.1, 0.1], [0.75, 0.75, 0.78], [0.15, 0.3, 0.55], [0.9, 0.75, 0.2], [0.3, 0.45, 0.3], [0.95, 0.95, 0.95]];
   G.cars = []; W.dyn.length = 0;
-  for (let k = 0; k < CONFIG.cars; k++) { const dir = k % 2 ? -1 : 1, n = Math.floor(k / 2); G.cars.push({ id: k, dir, off: dir > 0 ? -LANE_X : LANE_X, z: dir > 0 ? -40 + n * (ML + 80) / Math.ceil(CONFIG.cars / 2) : ML + 40 - n * (ML + 80) / Math.ceil(CONFIG.cars / 2) - 25, spd: 8, max: 7.5 + rnd() * 3, col: CAR_COL[k % CAR_COL.length], van: k % 4 === 3 }); }
-  const carX = c => aveX(clamp(c.z, 0, ML)) + c.off;
+  const AL = [0]; for (let q = 1; q < AVE_PTS.length; q++) AL.push(AL[q - 1] + Math.hypot(AVE_PTS[q][0] - AVE_PTS[q - 1][0], AVE_PTS[q][1] - AVE_PTS[q - 1][1])); const ALEN = AL[AL.length - 1];
+  const aveAt = sPos => { let q = 1; while (q < AL.length - 1 && AL[q] < sPos) q++; const a = AVE_PTS[q - 1], b = AVE_PTS[q], seg = AL[q] - AL[q - 1], t = clamp((sPos - AL[q - 1]) / seg, 0, 1); return { x: a[0] + (b[0] - a[0]) * t, z: a[1] + (b[1] - a[1]) * t, tx: (b[0] - a[0]) / seg, tz: (b[1] - a[1]) / seg }; };
+  G.aveAt = aveAt; G.aveLen = ALEN;
+  for (let k = 0; k < CONFIG.cars; k++) { const dir = k % 2 ? -1 : 1, n = Math.floor(k / 2); G.cars.push({ id: k, dir, s: (n + (dir > 0 ? 0 : 0.5)) * ALEN / Math.ceil(CONFIG.cars / 2), spd: 8, max: 7 + rnd() * 3, col: CAR_COL[k % CAR_COL.length], van: k % 4 === 3, x: 0, z: 0, fx: 0, fz: 1 }); }
+  const carPose = c => { const p = aveAt(c.s), fx = p.tx * c.dir, fz = p.tz * c.dir, rx = -fz, rz = fx; c.x = p.x + rx * LANE_X; c.z = p.z + rz * LANE_X; c.fx = fx; c.fz = fz; };
+  G.cars.forEach(carPose); G.carPose = carPose;
   function updateCars(dt) {
     W.dyn.length = 0;
     for (const c of G.cars) {
-      const cx = carX(c); let target = c.max;
-      const blocks = a => { if (!a.alive) return false; const d = (a.z - c.z) * c.dir; return d > 0 && d < 9.5 && Math.abs(a.x - cx) < 2.1; };
-      for (const a of G.actors) if (blocks(a)) { target = 0; break; }
+      let target = c.max;
+      const blocks = a => { if (!a.alive) return false; const dx = a.x - c.x, dz = a.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx; return al > 0 && al < 10 && Math.abs(la) < 2.2; };
+      for (const a of G.actors) if (blocks(a)) { target = 0; c.wait = (c.wait || 0) + dt;
+        // bot parado na frente do carro: sai da faixa para o lado mais próximo da calçada
+        if (a.ai && c.wait > 1.5 && !(a.ai.side > 0)) { const la = -(a.x - c.x) * c.fz + (a.z - c.z) * c.fx, sgn = la >= 0 ? 1 : -1; a.ai.sx = -c.fz * sgn; a.ai.sz = c.fx * sgn; a.ai.side = 1.4; }
+        if (a.ai && c.wait > 5) { const la = -(a.x - c.x) * c.fz + (a.z - c.z) * c.fx, sgn = la >= 0 ? 1 : -1; for (const d of [3.2, 4.5, 6]) { const nx = a.x - c.fz * sgn * d, nz = a.z + c.fx * sgn * d; if (W.fits(nx, nz, a.y, 0.3)) { a.x = nx; a.z = nz; a.y = W.groundAt(nx, nz, 0.3); c.wait = 0; break; } } }
+        break; }
+      if (target) c.wait = 0;
       if (target) for (const n of G.npcs) if (blocks(n)) { target = 0; break; }
-      for (const o of G.cars) if (o !== c && o.dir === c.dir) { const d = (o.z - c.z) * c.dir; if (d > 0 && d < 11) target = Math.min(target, Math.max(0, (d - 7) * 2)); }
-      c.spd += clamp(target - c.spd, -10 * dt, 3.5 * dt); c.z += c.dir * c.spd * dt;
-      if (c.dir > 0 && c.z > ML + 40) c.z = -40; if (c.dir < 0 && c.z < -40) c.z = ML + 40;
-      const x = carX(c); c.x = x; W.dyn.push({ x0: x - 1.0, x1: x + 1.0, z0: c.z - 2.3, z1: c.z + 2.3, top: c.van ? 2.0 : 1.5 });
+      for (const o of G.cars) if (o !== c && o.dir === c.dir) { const d = (o.s - c.s) * c.dir; if (d > 0 && d < 12) target = Math.min(target, Math.max(0, (d - 7.5) * 2)); }
+      c.spd += clamp(target - c.spd, -10 * dt, 3.5 * dt); c.s += c.dir * c.spd * dt;
+      if (c.s > ALEN) c.s -= ALEN; if (c.s < 0) c.s += ALEN;
+      carPose(c); W.dyn.push({ x: c.x, z: c.z, fx: c.fx, fz: c.fz, hl: 2.3, hw: 1.0, top: c.van ? 2.0 : 1.5 });
     }
   }
   G.updateCars = updateCars;
@@ -446,7 +554,7 @@ function makeGame(map, W, opts) {
       let s = rnd() * 4; for (const e of enemies) { const d = Math.hypot(e.x - x, e.z - z); s += Math.min(d, 60) * 0.1; if (d < 70 && W.los(x, y + 1.6, z, e.x, e.y + 1.5, e.z)) s -= 50; } if (s > bestS) { bestS = s; best = c; } }
     if (best < 0) best = spawns[a.team][(rnd() * spawns[a.team].length) | 0];
     a.x = W.cellX(best); a.z = W.cellZ(best); a.y = map.H[best]; a.vy = 0; a.onGround = true; a.hp = 100; a.alive = true; a.reloadT = 0; a.swapT = 0; a.cd = 0; a.invuln = 2; a.deathT = 0; a.yaw = a.team ? Math.PI : 0; a.pitch = 0; a.crouch = false; a.bloom = 0; a.refillT = 0;
-    a.ammo = loadout(); a.cur = 'rifle';   // nasceu na base: carregamento completo
+    a.ammo = loadout(); a.cur = 'rifle'; a.gren = CONFIG.grenade.start; a.grenCd = 0;   // nasceu na base: carregamento completo
     if (a.ai) Object.assign(a.ai, { path: null, goal: -1, target: null, stuck: 0, holdT: 0, lx: a.x, lz: a.z, stuckT: 0, mode: 'roam', fail: 0 });
     emit({ type: 'spawn', id: a.id });
   }
@@ -502,13 +610,43 @@ function makeGame(map, W, opts) {
   function swap(a, to) { const n = to || (a.cur === 'rifle' ? 'pistol' : 'rifle'); if (!a.alive || n === a.cur || !CONFIG.weapons[n]) return false; a.cur = n; a.reloadT = 0; a.swapT = W_(n).swap; a.cd = 0; emit({ type: 'swap', id: a.id, w: n }); return true; }
   // reabastecimento: só na estação do próprio time, dentro da área, segurando 3 s
   function nearStation(a) { const s = STATION(a.team); return Math.hypot(a.x - s.x, a.z - s.z) <= CONFIG.refill.radius && Math.abs(a.y - map.H[G.stationCell[a.team]]) < 2.5; }
-  function needsRefill(a) { for (const n in CONFIG.weapons) { const w = a.ammo[n], c = W_(n); if (w.mag < c.mag || w.res < c.res) return true; } return false; }
+  function needsRefill(a) { if ((a.gren || 0) < CONFIG.grenade.max) return true; for (const n in CONFIG.weapons) { const w = a.ammo[n], c = W_(n); if (w.mag < c.mag || w.res < c.res) return true; } return false; }
   function useStation(a, holding, dt) {
     if (a.refillCd > 0) a.refillCd -= dt;
     if (!holding || !a.alive || !nearStation(a) || a.refillCd > 0 || !needsRefill(a)) { if (a.refillT > 0 && holding !== 'keep') emit({ type: 'refillStop', id: a.id }); a.refillT = 0; return; }
     a.refillT += dt;
-    if (a.refillT >= CONFIG.refill.time) { a.ammo = loadout(); a.refillT = 0; a.refillCd = CONFIG.refill.cooldown; a.reloadT = 0; emit({ type: 'refill', id: a.id }); }
+    if (a.refillT >= CONFIG.refill.time) { a.ammo = loadout(); a.gren = Math.max(a.gren || 0, CONFIG.grenade.max); a.refillT = 0; a.refillCd = CONFIG.refill.cooldown; a.reloadT = 0; emit({ type: 'refill', id: a.id }); }
   }
+  // ---------- granadas (o servidor valida estoque e calcula a explosão) ----------
+  G.grenades = []; let gid = 1;
+  function throwGrenade(a) {
+    const C = CONFIG.grenade; if (!a.alive || (a.gren || 0) <= 0 || a.grenCd > 0 || a.reloadT > 0) return false;
+    a.gren--; a.grenCd = C.cooldown;
+    const d = dirOf(a.yaw, a.pitch + 0.18), ey = a.y + eyeH(a);
+    const g = { id: gid++, owner: a.id, team: a.team, x: a.x + d[0] * 0.6, y: ey - 0.2 + d[1] * 0.6, z: a.z + d[2] * 0.6, vx: d[0] * C.speed, vy: d[1] * C.speed + 1.5, vz: d[2] * C.speed, t: C.fuse };
+    if (!W.fits(g.x, g.z, g.y - 0.5, 0.05)) { g.x = a.x; g.z = a.z; }
+    G.grenades.push(g); emit({ type: 'gthrow', id: a.id, gid: g.id, x: g.x, y: g.y, z: g.z, vx: g.vx, vy: g.vy, vz: g.vz });
+    return true;
+  }
+  function stepGrenade(g, dt) {
+    for (let k = 0; k < 4; k++) { const h = dt / 4; g.vy -= 9.8 * h;
+      const nx = g.x + g.vx * h, nz = g.z + g.vz * h;
+      if (W.hCell(nx, g.z) > g.y || W.blockedAt(nx, g.z) && W.hCell(nx, g.z) > g.y - 0.1) g.vx = -g.vx * 0.45; else g.x = nx;
+      if (W.hCell(g.x, nz) > g.y || W.blockedAt(g.x, nz) && W.hCell(g.x, nz) > g.y - 0.1) g.vz = -g.vz * 0.45; else g.z = nz;
+      g.y += g.vy * h; const gr = Math.max(W.hCell(g.x, g.z), -1.5) + 0.08;
+      if (g.y < gr) { g.y = gr; if (g.vy < 0) g.vy = -g.vy * 0.32; g.vx *= 0.72; g.vz *= 0.72; if (Math.abs(g.vy) < 0.6) g.vy = 0; } }
+  }
+  function explode(g) {
+    const C = CONFIG.grenade, by = G.byId(g.owner) || { id: g.owner, team: g.team, kills: 0, x: g.x, y: g.y, z: g.z };
+    emit({ type: 'gboom', gid: g.id, x: g.x, y: g.y, z: g.z, by: g.owner });
+    const hitOne = v => { if (!v.alive || v === by || (!v.npc && v.team === g.team)) return; const d = Math.hypot(v.x - g.x, v.y + 1.0 - (g.y + 0.3), v.z - g.z); if (d > C.radius) return;
+      const dx = v.x - g.x, dy = v.y + 1.0 - (g.y + 0.3), dz = v.z - g.z, L = Math.hypot(dx, dy, dz) || 1; if (W.ray(g.x, g.y + 0.3, g.z, dx / L, dy / L, dz / L, L)) return; // parede protege
+      damage(v, C.damage * Math.pow(1 - d / C.radius, 1.3) + 8, by, false); };
+    for (const v of G.actors) hitOne(v); for (const n of G.npcs) hitOne(n);
+    for (const o of G.actors) if (o.ai && o.alive && Math.hypot(o.x - g.x, o.z - g.z) < 50) o.ai.heard = { x: g.x, z: g.z, y: g.y, t: G.t };
+  }
+  function updateGrenades(dt) { for (const g of G.grenades) { stepGrenade(g, dt); g.t -= dt; if (g.t <= 0) explode(g); } G.grenades = G.grenades.filter(g => g.t > 0); }
+  G.stepGrenade = stepGrenade;
   // ---------- dominação ----------
   function updateBases(dt) {
     for (const b of G.bases) {
@@ -542,8 +680,8 @@ function makeGame(map, W, opts) {
     a.ai.mode = 'roam';
     const enemySide = a.team === 0 ? 1 : -1; let tot = 0;
     const ws = G.goals.map(g => { let w = g.w;
-      if (g.tag === 'base') { const b = G.bases[g.base]; w *= b.owner === a.team ? (b.state === 'capturando' || b.state === 'contestada' ? 12 : 2.2) : 9; }
-      const zRel = (g.z - MID) * enemySide; if (zRel > 70) w *= 0.5; if (zRel < -80) w *= 0.25;
+      if (g.tag === 'base') { const b = G.bases[g.base]; w *= b.owner === a.team ? (b.state === 'capturando' || b.state === 'contestada' ? 40 : 3) : 34; w *= 90 / (50 + Math.hypot(b.x - a.x, b.z - a.z)); } // bots priorizam dominar as bases
+      const own = CLEAR[a.team ? 'verm' : 'azul'].c, foe = CLEAR[a.team ? 'azul' : 'verm'].c, dOwn = Math.hypot(W.cellX(g.c) - own[0], g.z - own[1]), dFoe = Math.hypot(W.cellX(g.c) - foe[0], g.z - foe[1]); if (dFoe < 30) w *= 0.3; if (dOwn < 25 && g.tag !== 'base') w *= 0.4;
       if (Math.hypot(W.cellX(g.c) - a.x, g.z - a.z) < 6) w *= 0.15; tot += w; return w; });
     let r = rnd() * tot; for (let k = 0; k < ws.length; k++) { r -= ws[k]; if (r <= 0) { const g = G.goals[k]; a.ai.mode = g.tag === 'base' ? 'base' : 'roam'; return g.c; } } return G.goals[0].c;
   }
@@ -557,7 +695,7 @@ function makeGame(map, W, opts) {
     useStation(a, ai.mode === 'refill' && nearStation(a), dt);
     if (ai.mode === 'refill' && !lowAmmo(a) && !needsRefill(a)) { ai.mode = 'roam'; ai.holdT = 0.2; }
     ai.think -= dt;
-    if (ai.think <= 0) { ai.think = 0.12 + rnd() * 0.05;
+    if (ai.think <= 0) { ai.think = D.think * (0.8 + rnd() * 0.5);
       let best = null, bestD = 1e9;
       for (const e of G.actors) { if (!e.alive || e.team === a.team) continue; const dx = e.x - a.x, dz = e.z - a.z, d = Math.hypot(dx, dz); if (d > 80) continue;
         const ang = Math.abs(angDiff(a.yaw, Math.atan2(dx, dz))), alert = (G.t - a.lastHurt < 1.5 && a.lastBy === e) || ai.target === e;
@@ -576,8 +714,11 @@ function makeGame(map, W, opts) {
       ai.react -= dt;
       if (ai.react <= 0 && Math.abs(dy) < 0.15 && canFire(a) && G.t - ai.seenT < 0.25 && !civilInLine(a, tg)) {
         if (ai.burstGap > 0) ai.burstGap -= dt;
-        else { fire(a, a.yaw, a.pitch, (a.cur === 'pistol' ? 0.01 : 0.012) + (a.onGround ? 0 : 0.05)); ai.burst++; if (a.cur === 'pistol') ai.burstGap = 0.12 + rnd() * 0.15; if (ai.burst >= D.burst + Math.floor(rnd() * 3)) { ai.burst = 0; ai.burstGap = D.gap * (0.7 + rnd() * 0.6); } }
+        else { fire(a, a.yaw, a.pitch, D.spread * (a.cur === 'pistol' ? 0.85 : 1) * (1 + Math.min(1, a.spd / 4) * 0.6) + (a.onGround ? 0 : 0.05)); ai.burst++; if (a.cur === 'pistol') ai.burstGap = 0.12 + rnd() * 0.15; if (ai.burst >= D.burst + Math.floor(rnd() * 3)) { ai.burst = 0; ai.burstGap = D.gap * (0.7 + rnd() * 0.6); } }
       } else if (ai.burstGap > 0) ai.burstGap -= dt;
+      if ((a.gren || 0) > 0 && a.grenCd <= 0 && dist > 10 && dist < 28 && G.t - ai.seenT < 0.3 && rnd() < dt * 0.12 * (D.grenade || 1)) { // arremesso em arco, impreciso
+        const v = CONFIG.grenade.speed, hgt = tg.y - (a.y + eyeH(a)), g9 = 9.8, disc = v ** 4 - g9 * (g9 * dist * dist + 2 * hgt * v * v);
+        if (disc > 0) { const th = Math.atan((v * v - Math.sqrt(disc)) / (g9 * dist)), keep = a.pitch; a.pitch = th - 0.18 + (rnd() - 0.5) * 0.12; a.yaw += (rnd() - 0.5) * 0.15; throwGrenade(a); a.pitch = keep; } }
       ai.strafeT -= dt; if (ai.strafeT <= 0) { ai.strafeT = 0.5 + rnd() * 0.9; ai.strafe = rnd() < 0.5 ? -1 : 1; if (rnd() < 0.2) ai.strafe = 0; }
       const rx = -Math.cos(a.yaw), rz = Math.sin(a.yaw); mvx = rx * ai.strafe; mvz = rz * ai.strafe; speed = 2.6;
       if (dist > 30) { mvx += Math.sin(a.yaw) * 0.6; mvz += Math.cos(a.yaw) * 0.6; }
@@ -594,16 +735,19 @@ function makeGame(map, W, opts) {
         while (ai.pi < ai.path.length - 1 && Math.hypot(tx - a.x, tz - a.z) < 0.45) { ai.pi++; n = ai.path[ai.pi]; tx = W.cellX(n); tz = W.cellZ(n); }
         if (ai.pi + 2 < ai.path.length) { const n2 = ai.path[ai.pi + 2]; const x2 = W.cellX(n2), z2 = W.cellZ(n2); if (Math.hypot(x2 - a.x, z2 - a.z) < 1.05 && Math.abs(map.H[n2] - a.y) < 0.4) { ai.pi += 2; tx = x2; tz = z2; } }
         const dx = tx - a.x, dz = tz - a.z, d = Math.hypot(dx, dz);
-        if (ai.pi >= ai.path.length - 1 && d < 0.5) { ai.path = null; ai.holdT = ai.recover ? 0.05 : ai.mode === 'base' ? 6 + rnd() * 6 : ai.mode === 'refill' ? 4 : 1.5 + rnd() * 4; ai.recover = false; }
+        if (ai.pi >= ai.path.length - 1 && d < 0.5) { ai.path = null; ai.holdT = ai.recover ? 0.05 : ai.mode === 'base' ? 4 + rnd() * 3 : ai.mode === 'refill' ? 4 : 1 + rnd() * 2.5; ai.recover = false; }
         else if (d > 1e-3) { mvx = dx / d; mvz = dz / d; const want = Math.atan2(dx, dz); if (!(ai.heard && G.t - ai.heard.t < 3)) a.yaw += clamp(angDiff(a.yaw, want), -4 * dt, 4 * dt); }
       }
     }
     const len = Math.hypot(mvx, mvz); if (len > 1) { mvx /= len; mvz /= len; }
+    // desvio de carros parados: se bateu num carro, dá alguns passos para o lado antes de seguir
+    if (ai.side > 0) { ai.side -= dt; mvx = ai.sx; mvz = ai.sz; }
     const wall = W.move(a, mvx * speed, mvz * speed, dt); a.spd = len > 0.05 ? speed : 0;
     if (tg && wall) ai.strafe = -ai.strafe;
+    if (wall && !(ai.side > 0)) for (const d of W.dyn) { const dx = a.x - d.x, dz = a.z - d.z; if (dx * dx + dz * dz < 16) { const al = dx * d.fx + dz * d.fz; ai.sx = al >= 0 ? d.fx : -d.fx; ai.sz = al >= 0 ? d.fz : -d.fz; ai.side = 1.1; break; } }
     ai.stuckT += dt;
     if (ai.stuckT > 1.2) { const moved = Math.hypot(a.x - ai.lx, a.z - ai.lz), wanted = ai.path && !ai.holdT;
-      if (wanted && moved < 0.35) { ai.stuck++; if (ai.stuck >= 5) { const c = nearestMain(a.x, a.z); if (c >= 0) { a.x = W.cellX(c); a.z = W.cellZ(c); a.y = map.H[c]; } G.stats.unstuck++; ai.stuck = 0; requestPath(a, pickGoal(a)); } else if (ai.stuck >= 2) requestPath(a, pickGoal(a)); else requestPath(a, ai.goal); }
+      if (wanted && moved < 0.35) { ai.stuck++; if (ai.stuck >= 5) { const c = nearestMain(a.x, a.z); if (c >= 0) { a.x = W.cellX(c); a.z = W.cellZ(c); a.y = map.H[c]; } G.stats.unstuck++; (G.stats.where || (G.stats.where = [])).push([Math.round(a.x), Math.round(a.z), 'mov']); ai.stuck = 0; requestPath(a, pickGoal(a)); } else if (ai.stuck >= 2) requestPath(a, pickGoal(a)); else requestPath(a, ai.goal); }
       else if (moved > 0.6) ai.stuck = 0;
       ai.stuckT = 0; ai.lx = a.x; ai.lz = a.z; }
   }
@@ -616,7 +760,7 @@ function makeGame(map, W, opts) {
       if (p && p.length > 1) { a.ai.path = p; a.ai.pi = 1; a.ai.fail = 0; }
       else if (p && p.length === 1) { a.ai.path = null; a.ai.holdT = a.ai.mode === 'base' ? 6 : 0.5; }
       else { a.ai.fail = (a.ai.fail || 0) + 1;
-        if (a.ai.fail >= 3) { const c = nearestMain(a.x, a.z); if (c >= 0) { a.x = W.cellX(c); a.z = W.cellZ(c); a.y = map.H[c]; G.stats.unstuck++; } a.ai.fail = 0; a.ai.path = null; a.ai.holdT = 0.2; }
+        if (a.ai.fail >= 3) { const c = nearestMain(a.x, a.z); if (c >= 0) { (G.stats.where || (G.stats.where = [])).push([Math.round(a.x), Math.round(a.z), 'path']); a.x = W.cellX(c); a.z = W.cellZ(c); a.y = map.H[c]; G.stats.unstuck++; } a.ai.fail = 0; a.ai.path = null; a.ai.holdT = 0.2; }
         else if (s >= 0 && Math.hypot(W.cellX(s) - a.x, W.cellZ(s) - a.z) > 0.3) { a.ai.path = [s, s]; a.ai.pi = 1; a.ai.recover = true; }
         else { a.ai.path = null; a.ai.holdT = 0.3 + rnd() * 0.5; } } }
   }
@@ -636,7 +780,7 @@ function makeGame(map, W, opts) {
     if (G.timeLeft <= 0 && !G.over) { G.timeLeft = 0; G.over = true; G.winner = G.score[0] === G.score[1] ? -1 : G.score[0] > G.score[1] ? 0 : 1; emit({ type: 'end', winner: G.winner }); }
     for (const a of G.actors) {
       if (!a.alive) { a.deathT += dt; if (a.respawnT > -1) { a.respawnT -= dt; if (a.respawnT <= 0 && !a.waitSpawn) spawn(a); } continue; }
-      a.invuln = Math.max(0, a.invuln - dt); a.hurtT = Math.max(0, a.hurtT - dt); a.cd = Math.max(0, a.cd - dt); a.bloom = Math.max(0, a.bloom - dt * 0.12);
+      a.grenCd = Math.max(0, (a.grenCd || 0) - dt); a.invuln = Math.max(0, a.invuln - dt); a.hurtT = Math.max(0, a.hurtT - dt); a.cd = Math.max(0, a.cd - dt); a.bloom = Math.max(0, a.bloom - dt * 0.12);
       if (a.swapT > 0) a.swapT = Math.max(0, a.swapT - dt);
       if (a.reloadT > 0) { a.reloadT -= dt; if (a.reloadT <= 0) { a.reloadT = 0; finishReload(a); } }
       if (G.t - a.lastHurt > 5 && a.hp < 100) a.hp = Math.min(100, a.hp + 12 * dt);
@@ -648,6 +792,8 @@ function makeGame(map, W, opts) {
     processPaths();
     let nb = 2; while (npcPathQ.length && nb-- > 0) { const n = npcPathQ.shift(); if (!n.alive) continue; const s = W.nearestOK(n.x, n.z, 4), g = G.npcSpots[(rnd() * G.npcSpots.length) | 0]; const p = s >= 0 ? W.path(s, g, 40000) : null; if (p && p.length > 1 && p.length < 260) { n.path = p; n.pi = 1; } else n.waitT = 2 + rnd() * 3; }
     updateCars(dt);
+    updateGrenades(dt);
+    G.dayT = (G.dayT + dt / CONFIG.dayLength) % 1;
     updateBases(dt);
     for (const k of ['tracers', 'puffs', 'flashes']) { const L = G.fx[k]; for (const f of L) f.t -= dt; G.fx[k] = L.filter(f => f.t > 0); }
   }
@@ -670,6 +816,7 @@ function makeGame(map, W, opts) {
   function actions(a, dt) {
     const I = a.in;
     if (I.swap) { swap(a); I.swap = false; }
+    if (I.gren) { throwGrenade(a); I.gren = false; }
     if (I.reload) { startReload(a); I.reload = false; }
     const w = a.ammo[a.cur], wc = W_(a.cur);
     if (w.mag === 0 && w.res > 0 && a.reloadT <= 0 && a.swapT <= 0 && I.fire) startReload(a);
@@ -687,23 +834,25 @@ function makeGame(map, W, opts) {
       a.trig = true;
     } else a.trig = false;
   }
-  G.sectorAt = (x, z) => { const zf = foldZ(z), dz = Math.abs(z - MID), side = z < MID ? 0 : 1;
-    if (zf <= BASEZ + 1 && x > 34 && x < 120) return 'Base ' + TEAM[side].name;
-    if (x < aveEast(z) + 0.6) return 'Avenida das Américas';
-    if (x >= WALK_X0 - 0.5) return 'Beira do Valão';
-    if (dz <= PRACA.hz + 1 && x <= PRACA.x1) return 'Zona Central — Praça';
-    if (dz <= 9 && x >= ESC_X0 && x <= ESC_X1 + 2) return 'Zona Central — Escadão';
-    if (x > 92 && dz < 34) return 'Alto do Escadão';
-    if (dz < 46) return 'Zona Central';
-    if (Math.hypot((x - 97) / 20, (zf - 62) / 22) < 1) return 'Morro do Mirante';
-    return 'Bairro ' + (side ? 'Vermelho' : 'Azul'); };
-  Object.assign(G, { spawn, update, fire, damage, eyeH, bodyH, dirOf, canSee, startReload, finishReload, swap, useStation, nearStation, needsRefill, actions, totalAmmo, spawnNpc, nearestMain, hitActors });
+  G.sectorAt = (x, z) => {
+    for (const [k, nm] of [['azul', 'Base Azul — Alto da Mata'], ['verm', 'Base Vermelha — Morro do Cruzeiro'], ['A', 'Base A — Clareira da Mata'], ['praca', 'Praça Central (Base B)'], ['C', 'Base C — Canal']]) if (ellR(x, z, CLEAR[k]) <= 1.15) return nm;
+    if (Math.abs(x - QUADRA.x) <= QUADRA.hx + 3 && z >= QUADRA.z - QUADRA.hz - 3 && z <= STAGE.z + 3) return 'Quadra do Baile';
+    if (polyDist(x, z, BOTTOM_ROAD) <= 4) return 'Passagem de baixo';
+    const dA = Math.abs(polySide(x, z, AVE_PTS)), dC = Math.abs(polySide(x, z, CANAL_PTS));
+    if (dA <= AVE_HW + SIDEW + 0.5) return 'Avenida das Américas';
+    if (dC <= CAN_HW + CAN_WALL + BANK_W + 0.5) return 'Canal / Valão';
+    if (escAt(x, z)) return z > 66 && x < 36 ? 'Alto do Escadão' : 'Escadão Principal';
+    if (inPoly(x, z, POLY_LEFT)) { if (z > 78) return 'Alto do Escadão'; if (x < 30) return 'Vila da Serra'; if (z < 22) return 'Beco da Mina'; return 'Favela do Escadão'; }
+    if (inPoly(x, z, POLY_RIGHT)) { if (z > 75 && x < 195) return 'Vila do Valão'; if (x > 228 && z > 45) return 'Vila Nova'; if (z < 50 && x > 205) return 'Lajes do Topo'; return 'Favela do Valão'; }
+    return 'Mata Central'; };
+  Object.assign(G, { throwGrenade, spawn, update, fire, damage, eyeH, bodyH, dirOf, canSee, startReload, finishReload, swap, useStation, nearStation, needsRefill, actions, totalAmmo, spawnNpc, nearestMain, hitActors });
   G.byId = id => G.actors.find(a => a.id === id) || G.npcs.find(n => n.id === id);
   return G;
 }
 
 const API = { CONFIG, TEAM, BOT_NAMES, DIFF_FPS, CELL, GX, GZ, NC, MW, ML, K_VOID, K_AVE, K_WALK, K_STREET, K_ESC, K_BECO, K_ROOF, K_BLOCK, K_PLAZA, WALKABLE,
-  B_MURO, B_TANK, B_GUARD, B_WALL, B_INVIS, B_TANK2, B_SAND, B_JERSEY, B_BRICKS, B_BARREL, B_SUPPLY, STEP_UP,
+  B_MURO, B_TANK, B_GUARD, B_WALL, B_INVIS, B_TANK2, B_SAND, B_JERSEY, B_BRICKS, B_BARREL, B_SUPPLY, B_ROCK, B_FENCE, B_MODEL, MODEL_DEFS, K_TRAIL, K_MATA, STEP_UP,
+  CLEAR, QUADRA, STAGE, ESC, AVE_PTS, CANAL_PTS, BOTTOM_ROAD, BRIDGES, POLY_LEFT, POLY_RIGHT, TRAILS, polySide, polyDist, inPoly, escAt, ellR, CAN_HW, CAN_WALL, BANK_W,
   buildMap, makeWorld, makeGame, terrain, aveX, foldZ, mulberry, h2, clamp, sm, lerp, angDiff, STREETS, SUPPLY, PRACA, CANAL_ST, WALK_X0, WALK_X1, WALK_H, STATION, MID, AVE_HW, SIDEW, LANE_X, PARK_X, ESC_HW, ESC_X0, ESC_X1, BASEZ, WATER_X1, aveEast,
   get ESC_LAND() { return ESC_LAND; } };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.EscSim = API;
