@@ -4,26 +4,31 @@
 const S = window.EscSim, P = window.EscPlay, HUD = window.EscHUD;
 const $ = (q, el) => (el || document).querySelector(q);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const VERSION = '2.1.0';
+const VERSION = '2.4.0';
 const store = { get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
-const cfg = P.cfg = Object.assign({ name: '', quality: 'medio', sens: 1, volume: 0.8, diff: 'normal', team: 0, showFps: false }, store.get('escadao3d-cfg', {}));
+const cfg = P.cfg = Object.assign({ name: '', quality: 'medio', sens: 1, volume: 0.8, diff: 'normal', team: 0, showFps: false, opTop: 0.65, opCtl: 0.6, muted: false, aimAssist: true }, store.get('escadao3d-cfg', {}));
 const saveCfg = () => store.set('escadao3d-cfg', cfg);
 const stats = Object.assign({ partidas: 0, vitorias: 0, derrotas: 0, abates: 0, mortes: 0, capturas: 0, civis: 0, online: 0 }, store.get('escadao3d-stats', {}));
 let key = store.get('escadao3d-key', null); if (!key) { key = 'k' + Math.random().toString(36).slice(2) + Date.now().toString(36); store.set('escadao3d-key', key); }
 const touch = P.touch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0 && matchMedia('(pointer:coarse)').matches);
 const ONLINE = typeof window.io === 'function';
-const app = { screen: null, socket: null, room: null, lobby: null, layout: HUD.load(touch), keys: {}, last: performance.now(), fps: 60, fpsN: 0, fpsT: 0 };
+const app = { screen: null, socket: null, room: null, lobby: null, layout: null, keys: {}, last: performance.now(), fps: 60, fpsN: 0, fpsT: 0 };
 window.EscApp = app;
 
 // ---------------- elementos base ----------------
 const root = $('#app'), glc = $('#gl'), hud = $('#hud'), ui = $('#ui'), touchLayer = $('#touch');
 const hctx = hud.getContext('2d');
-P.audio = window.EscAudio(); P.audio.setVolume(cfg.volume);
+P.audio = window.EscAudio(); P.audio.setVolume(cfg.volume); P.audio.setMuted(!!cfg.muted);
 P.audio.load({ rifle: window.ESC_AUDIO ? window.ESC_AUDIO.rifle : '/audio/fuzil.mp3', pistol: window.ESC_AUDIO ? window.ESC_AUDIO.pistol : '/audio/pistola.mp3' });
+P.audio.loadAmbient(window.ESC_AUDIO && window.ESC_AUDIO.amb ? window.ESC_AUDIO.amb : [1, 2, 3, 4].map(k => '/audio/ambiente/tiroteio_' + k + '.mp3'));
+const portrait = () => root.clientHeight > root.clientWidth;
+// margens de segurança do aparelho (entalhe, barra de gestos), lidas do CSS env()
+function insets() { const pr = document.getElementById('safeProbe'); if (!pr) return { t: 0, r: 0, b: 0, l: 0 }; const cs = getComputedStyle(pr); return { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 }; }
 function resize() {
   const q = P.quality(), dpr = Math.min(window.devicePixelRatio || 1, q.scale >= 1 ? 1.5 : 1) * Math.min(1, q.scale), w = root.clientWidth, h = root.clientHeight;
   glc.width = Math.max(1, Math.round(w * dpr)); glc.height = Math.max(1, Math.round(h * dpr)); if (P.R) P.R.gl.viewport(0, 0, glc.width, glc.height);
-  const hs = Math.min(window.devicePixelRatio || 1, 2); hud.width = Math.round(w * hs); hud.height = Math.round(h * hs); app.view = Object.assign(app.view || {}, { W: w, H: h, hs, hctx }); layoutTouch();
+  const hs = Math.min(window.devicePixelRatio || 1, 2); hud.width = Math.round(w * hs); hud.height = Math.round(h * hs); const por = h > w; if (!app.layout || app.portrait !== por) { app.portrait = por; if (!app.editing) app.layout = HUD.load(touch, por); }
+  app.view = Object.assign(app.view || {}, { W: w, H: h, hs, hctx, area: HUD.area(w, h, insets()), op: { top: cfg.opTop, ctl: cfg.opCtl } }); layoutTouch();
 }
 window.addEventListener('resize', resize);
 
@@ -64,7 +69,7 @@ function playMenu() {
     <button class="big" id="quick" ${ONLINE ? '' : 'disabled'}><b>Partida online rápida</b><small>${ONLINE ? 'Entra numa sala pública com vaga ou cria uma nova' : 'Indisponível: este arquivo não está conectado ao servidor do jogo (Render).'}</small></button>
     <button class="big" id="train"><b>Treino com bots</b><small>Dominação de Bases no seu aparelho, você + 4 bots contra 5 bots, sem internet</small></button>
     <div class="opts"><label>Time no treino</label><div class="seg" data-k="team"><button data-v="0">Azul</button><button data-v="1">Vermelho</button></div>
-    <label>Dificuldade dos bots</label><div class="seg" data-k="diff"><button data-v="facil">Fácil</button><button data-v="normal">Normal</button><button data-v="dificil">Difícil</button></div></div></div>`, 'm-panel');
+    <label>Dificuldade dos bots</label><div class="seg" data-k="diff"><button data-v="facil">Fácil</button><button data-v="normal">Normal</button><button data-v="dificil">Difícil</button><button data-v="elite">Muito difícil</button></div></div></div>`, 'm-panel');
   wireSeg(); wireBack();
   $('#train').onclick = () => needName(() => startOffline());
   if (ONLINE) $('#quick').onclick = () => needName(() => connect(() => { app.socket.emit('rooms:sub'); app.socket.once('rooms:list', list => { const r = list.find(x => !x.priv && x.state !== 'ended' && x.humans + 0 < 10 && (x.total < 10 || x.bots > 0)); if (r) joinRoom(r.id); else createRoom({ name: 'Sala de ' + cfg.name, bots0: 4, bots1: 5, diff: cfg.diff }); }); }));
@@ -89,6 +94,26 @@ function newsScreen() {
   app.screen = 'news';
   show(`<div class="panel">${back()}<h2>Novidades</h2><div class="news">
     <h4>Versão ${VERSION}</h4><ul>
+    <li><b>Relevo de volta, suave e moderado</b>: morros arredondados (no máximo ~5 m), chão contínuo sem degraus em bloco e texturas de chão mais lisas.</li>
+    <li><b>Mais construções 3D</b>: os seis modelos enviados agora substituem cerca de 45 casas geradas, com três níveis de detalhe.</li>
+    <li><b>Som ambiente de tiroteio</b>: quando outros jogadores trocam tiros perto de você, as gravações completas de tiroteio tocam na direção do confronto.</li>
+    <li><b>Assistência de mira leve</b> (pode desligar em Configurações).</li>
+    <li>Aviso ao tentar atirar sem munição: volte à base para recarregar.</li>
+    <li>Bots focados em dominar as bases e nova dificuldade <b>Muito difícil</b>.</li>
+    <li>Ruas e becos mais largos; continua sem nenhum beco sem saída.</li></ul>
+    <h4>Versão 2.3.0</h4><ul>
+    <li><b>Terreno plano</b>: o relevo foi retirado do mapa inteiro. Só o escadão, as lajes, a arquibancada e o palco têm altura.</li>
+    <li><b>Casas organizadas em quadras</b>, com lotes regulares e ruas retas nas duas favelas.</li>
+    <li><b>Nenhum beco sem saída</b>: toda rua e todo beco terminam em outra rua, numa praça ou na mata. O escadão agora desce do outro lado do Alto.</li>
+    <li>Mata densa bloqueia a visão de longe (não as balas).</li></ul>
+    <h4>Versão 2.2.0</h4><ul>
+    <li><b>Mapa reconstruído</b> a partir do mapa oficial: Base Azul no Alto da Mata, Base A na clareira, Mata Central com trilhas, Avenida das Américas (uma faixa por sentido) e o canal com pontes, Favela do Escadão (Vila da Serra, Alto do Escadão, Praça Central, Beco da Mina), Favela do Valão (Vila do Valão, Quadra do Baile, Vila Nova, Lajes do Topo) e a passagem de baixo.</li>
+    <li><b>Construções 3D</b> novas espalhadas pelas duas favelas (seis modelos detalhados).</li>
+    <li><b>Dia e noite</b>: ciclo de 20 minutos com manhã, meio-dia, tarde, pôr do sol, noite com lua e estrelas, postes, janelas e refletores da quadra acendendo sozinhos.</li>
+    <li><b>Granadas</b>: 2 por vida (recarregam na estação da base), botão próprio ou tecla G.</li>
+    <li>Traçantes mais visíveis à noite. Bots menos precisos.</li>
+    <li>HUD menor e mais transparente, controles no novo estilo e <b>editor de HUD</b> refeito.</li></ul>
+    <h4>Versão 2.1.0</h4><ul>
     <li><b>Mapa 3x maior</b> (140 × 280 m) com uma <b>Zona Central</b> entre os times: Praça Central, Escadão no morro e Canal.</li>
     <li>Relevo variado: baixada plana perto da avenida e nas bases, o Morro do Escadão no meio e o Morro do Mirante em cada bairro.</li>
     <li>Ruas principais, secundárias e becos mais largos. Avenida das Américas com duas faixas e estacionamento de cada lado.</li>
@@ -113,6 +138,9 @@ function settingsScreen(fromGame) {
     <small class="hint">Baixo: menor resolução interna, menos efeitos e neblina mais próxima. Alto: resolução cheia e mais partículas.</small>
     <label for="sens">Sensibilidade da mira</label><input id="sens" type="range" min="0.3" max="2.5" step="0.05" value="${cfg.sens}">
     <label for="vol">Volume</label><input id="vol" type="range" min="0" max="1" step="0.05" value="${cfg.volume}">
+    <label for="opt">Fundo do HUD superior (placar, minimapa)</label><input id="opt" type="range" min="0.2" max="1" step="0.05" value="${cfg.opTop}">
+    <label for="opc">Fundo dos controles</label><input id="opc" type="range" min="0.2" max="1" step="0.05" value="${cfg.opCtl}">
+    <label class="chk"><input type="checkbox" id="aa" ${cfg.aimAssist ? 'checked' : ''}> Assistência de mira (leve)</label>
     <label class="chk"><input type="checkbox" id="fps" ${cfg.showFps ? 'checked' : ''}> Mostrar quadros por segundo</label>
     <button class="btn" id="edit">Editar HUD</button></div>
     ${fromGame ? '<button class="btn red" id="close">Voltar à partida</button>' : ''}</div>`, 'm-panel');
@@ -121,6 +149,9 @@ function settingsScreen(fromGame) {
   $('#sens').oninput = e => { cfg.sens = +e.target.value; saveCfg(); };
   $('#vol').oninput = e => { cfg.volume = +e.target.value; P.audio.setVolume(cfg.volume); saveCfg(); };
   $('#fps').onchange = e => { cfg.showFps = e.target.checked; saveCfg(); };
+  $('#aa').onchange = e => { cfg.aimAssist = e.target.checked; saveCfg(); };
+  $('#opt').oninput = e => { cfg.opTop = +e.target.value; saveCfg(); resize(); };
+  $('#opc').oninput = e => { cfg.opCtl = +e.target.value; saveCfg(); resize(); };
   $('#edit').onclick = () => openEditor(fromGame ? () => pauseScreen() : settingsScreen);
   if (fromGame) $('#close').onclick = () => pauseScreen();
 }
@@ -174,7 +205,7 @@ function renderRoomList() {
 function createDialog() {
   const m = modal(`<h3>Criar sala</h3><label>Nome da sala</label><input id="rn" maxlength="28" value="${esc('Sala de ' + cfg.name)}"><label>Senha (opcional)</label><input id="rp" maxlength="24" placeholder="Deixe vazio para sala pública" autocomplete="off">
     <div class="two"><div><label>Bots no Azul</label><input id="b0" type="number" min="0" max="5" value="4"></div><div><label>Bots no Vermelho</label><input id="b1" type="number" min="0" max="5" value="5"></div></div>
-    <label>Modo</label><div class="fixed">Dominação de Bases</div><label>Dificuldade dos bots</label><select id="df"><option value="facil">Fácil</option><option value="normal" selected>Normal</option><option value="dificil">Difícil</option></select>
+    <label>Modo</label><div class="fixed">Dominação de Bases</div><label>Dificuldade dos bots</label><select id="df"><option value="facil">Fácil</option><option value="normal" selected>Normal</option><option value="dificil">Difícil</option><option value="elite">Muito difícil</option></select>
     <div class="row"><button class="btn ghost" id="cn">Cancelar</button><button class="btn red" id="ok">Criar</button></div>`);
   $('#cn', m).onclick = () => m.remove();
   $('#ok', m).onclick = () => { createRoom({ name: $('#rn', m).value, pass: $('#rp', m).value, bots0: +$('#b0', m).value, bots1: +$('#b1', m).value, diff: $('#df', m).value }); m.remove(); };
@@ -195,10 +226,10 @@ function renderLobby() {
       ${Array.from({ length: bots }, (_, i) => `<div class="pl bot">🤖 ${S.BOT_NAMES[t][i]} <small>bot</small></div>`).join('')}${Array.from({ length: Math.max(0, free) }, () => '<div class="pl empty">vaga livre</div>').join('')}
       ${host ? `<div class="bots"><span>Bots</span><button class="btn sm" data-bot="${t}" data-d="-1">−</button><b>${bots}</b><button class="btn sm" data-bot="${t}" data-d="1">+</button></div>` : ''}</div>`; };
   el.innerHTML = `<button class="back" data-back>‹ Sair da sala</button><h2>${esc(L.name)} <small class="code">código ${L.id}${L.priv ? ' · 🔒 privada' : ''}</small></h2>
-    <p class="note">Dominação de Bases · bots ${({ facil: 'fáceis', normal: 'normais', dificil: 'difíceis' })[L.diff]}${L.state === 'playing' ? ' · <b>partida em andamento</b>' : ''}</p>
+    <p class="note">Dominação de Bases · bots ${({ facil: 'fáceis', normal: 'normais', dificil: 'difíceis', elite: 'muito difíceis' })[L.diff]}${L.state === 'playing' ? ' · <b>partida em andamento</b>' : ''}</p>
     <div class="teams">${col(0)}${col(1)}</div>
     <div class="row wrap"><button class="btn" id="inv">Convidar amigos</button><button class="btn" id="sw">Trocar de time</button><button class="btn ${meP && meP.ready ? 'ok' : ''}" id="rd">${meP && meP.ready ? 'Pronto ✓' : 'Pronto'}</button>
-    ${host ? `<select id="df"><option value="facil">Bots fáceis</option><option value="normal">Bots normais</option><option value="dificil">Bots difíceis</option></select><button class="btn red" id="st" ${L.state !== 'lobby' ? 'disabled' : ''}>Iniciar partida</button>` : '<span class="note">Aguardando o anfitrião iniciar.</span>'}</div>`;
+    ${host ? `<select id="df"><option value="facil">Bots fáceis</option><option value="normal">Bots normais</option><option value="dificil">Bots difíceis</option><option value="elite">Bots muito difíceis</option></select><button class="btn red" id="st" ${L.state !== 'lobby' ? 'disabled' : ''}>Iniciar partida</button>` : '<span class="note">Aguardando o anfitrião iniciar.</span>'}</div>`;
   el.querySelector('[data-back]').onclick = () => { app.socket.emit('room:leave'); app.room = null; app.lobby = null; roomsScreen(); };
   $('#inv').onclick = () => { const link = location.origin + '/sala/' + L.id; const done = () => toast('Link copiado: ' + link + (L.priv ? ' (a senha é pedida separadamente)' : '')); if (navigator.clipboard) navigator.clipboard.writeText(link).then(done, () => prompt('Copie o link do convite:', link)); else prompt('Copie o link do convite:', link); };
   $('#sw').onclick = () => app.socket.emit('lobby:team', { team: meP.team === 0 ? 1 : 0 });
@@ -218,17 +249,17 @@ function startOnline(d) {
   if (!ensure3D()) return; if (P.sess) P.endSession(); show(''); app.screen = 'game';
   P.startSession({ mode: 'online', socket: app.socket, start: d }, { onEnd: showResult }); enterGame();
 }
-function enterGame() { root.classList.add('ingame'); touchLayer.style.display = touch ? 'block' : 'none'; layoutTouch(); if (!touch) lockPointer(); P.audio.ensure(); }
-function endGame() { P.endSession(); root.classList.remove('ingame'); touchLayer.style.display = 'none'; if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock(); hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, hud.width, hud.height); }
+function enterGame() { root.classList.add('ingame'); touchLayer.style.display = touch ? 'block' : 'none'; app.screen = 'game'; layoutTouch(); if (!touch) lockPointer(); P.audio.ensure(); }
+function endGame() { P.endSession(); root.classList.remove('ingame'); touchLayer.style.display = 'none'; topBtns.style.display = 'none'; if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock(); hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, hud.width, hud.height); }
 function pauseScreen() {
-  const s = P.sess; if (!s) return; s.paused = s.mode === 'offline'; app.screen = 'pause'; releaseInput(); if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock();
+  const s = P.sess; if (!s) return; s.paused = s.mode === 'offline'; app.screen = 'pause'; topBtns.style.display = 'none'; releaseInput(); if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock();
   show(`<div class="panel"><h2>Pausa</h2>${s.mode === 'online' ? '<p class="note">A partida online continua enquanto este menu está aberto.</p>' : ''}
     <button class="btn red" id="ct">Continuar</button><button class="btn" id="ed">Editar HUD</button><button class="btn" id="cf">Configurações</button><button class="btn ghost" id="ex">${s.mode === 'online' ? 'Sair da sala' : 'Sair para o menu'}</button>
     <p class="hint">${touch ? 'Esquerda: joystick. Direita: arraste para mirar. Botões de tiro, mira, pulo, agachar, recarregar, trocar arma e interagir.' : 'WASD anda · mouse mira · clique atira · botão direito mira · Shift corre · Espaço pula · C agacha · R recarrega · Q ou 1/2 troca arma · segure E na estação · Tab placar · Esc pausa'}</p></div>`, 'm-panel');
   $('#ct').onclick = resume; $('#ed').onclick = () => openEditor(pauseScreen); $('#cf').onclick = () => settingsScreen(true);
   $('#ex').onclick = () => { if (s.mode === 'online') { app.socket.emit('room:leave'); app.room = null; app.lobby = null; endGame(); roomsScreen(); } else { endGame(); menu(); } };
 }
-function resume() { const s = P.sess; if (!s) return; s.paused = false; app.screen = 'game'; show(''); if (!touch) lockPointer(); }
+function resume() { const s = P.sess; if (!s) return; s.paused = false; app.screen = 'game'; show(''); layoutTouch(); if (!touch) lockPointer(); }
 function showResult(d) {
   const s = P.sess; if (!s) return; app.screen = 'result'; releaseInput(); if (document.exitPointerLock && document.pointerLockElement) document.exitPointerLock();
   const myId = s.myId, me = d.stats.find(x => x.id === myId) || {}, won = d.winner === s.team;
@@ -249,7 +280,7 @@ function releaseInput() { const s = P.sess; if (!s) return; Object.assign(s.inpu
 const playing = () => P.sess && app.screen === 'game';
 function keyState() { const s = P.sess; if (!s) return; const K = app.keys, I = s.input; I.mz = (K.KeyW || K.ArrowUp ? 1 : 0) - (K.KeyS || K.ArrowDown ? 1 : 0); I.mx = (K.KeyD || K.ArrowRight ? 1 : 0) - (K.KeyA || K.ArrowLeft ? 1 : 0); I.sprint = !!(K.ShiftLeft || K.ShiftRight); I.crouch = !!(K.KeyC || K.ControlLeft); I.use = !!K.KeyE; }
 window.addEventListener('keydown', e => { if (!playing() || e.target.tagName === 'INPUT') { if (e.code === 'Escape' && app.screen === 'pause') resume(); return; } const I = P.sess.input;
-  if (e.code === 'Tab') { app.view.board = true; e.preventDefault(); } if (e.code === 'Escape' || e.code === 'KeyP') { pauseScreen(); return; } if (e.code === 'Space') { I.jump = true; e.preventDefault(); } if (e.code === 'KeyR') I.reload = true;
+  if (e.code === 'Tab') { app.view.board = true; e.preventDefault(); } if (e.code === 'Escape' || e.code === 'KeyP') { pauseScreen(); return; } if (e.code === 'Space') { I.jump = true; e.preventDefault(); } if (e.code === 'KeyR') I.reload = true; if (e.code === 'KeyG') I.gren = true;
   if (e.code === 'KeyQ' || (e.code === 'Digit1' && P.sess.me.cur !== 'rifle') || (e.code === 'Digit2' && P.sess.me.cur !== 'pistol')) I.swap = true; if (e.code.startsWith('Arrow')) e.preventDefault(); app.keys[e.code] = true; keyState(); });
 window.addEventListener('keyup', e => { if (e.code === 'Tab') app.view.board = false; app.keys[e.code] = false; keyState(); });
 window.addEventListener('blur', () => { releaseInput(); });
@@ -261,53 +292,89 @@ window.addEventListener('mousemove', e => { if (!playing() || touch) return; if 
 document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement && playing() && !touch && !app.noLock) pauseScreen(); });
 document.addEventListener('pointerlockerror', () => { app.noLock = true; });
 document.addEventListener('visibilitychange', () => { if (document.hidden && playing()) pauseScreen(); });
-// toque: joystick fixo, mira arrastando, botões posicionados pelo layout do HUD
-const TB = [['fire', 'ATIRAR', 96], ['aim', 'MIRA', 60], ['jump', 'PULAR', 60], ['crouch', 'AGACHAR', 60], ['reload', 'RECARR.', 60], ['swap', 'TROCAR', 60], ['use', 'INTERAGIR', 60]];
-touchLayer.innerHTML = `<div class="joy" data-b="joy"><div class="knob"></div></div><button class="tpause" data-b="pause" aria-label="Pausar">II</button>` + TB.map(([b, l]) => `<div class="tb" data-b="${b}">${l}</div>`).join('');
-const TEL = {}; touchLayer.querySelectorAll('[data-b]').forEach(el => TEL[el.dataset.b] = el);
-function layoutTouch() { const L = app.layout, v = app.view; if (!v || !L.joy) return;
-  const put = (k, d) => { const el = TEL[k], o = L[k]; if (!el || !o) return; const sz = d * o.s; el.style.width = el.style.height = sz + 'px'; el.style.left = Math.max(4, Math.min(v.W - sz - 4, o.x * v.W - sz / 2)) + 'px'; el.style.top = Math.max(4, Math.min(v.H - sz - 4, o.y * v.H - sz / 2)) + 'px'; el.style.opacity = o.a; };
-  put('joy', 130); for (const [k, , d] of TB) put(k, d); }
+// ---------------- controles de toque (estilo da referência: botões escuros, ícones brancos, disparo vermelho) ----------------
+const SVG = (d, vb) => `<svg viewBox="${vb || '0 0 24 24'}" aria-hidden="true">${d}</svg>`;
+const IC = {
+  fire: SVG('<path d="M3 17l3-1 9-9a3 3 0 014 0l1 1a3 3 0 010 4l-9 9-1 3-2-2-2 2-1-1 2-2z" fill="#fff" transform="rotate(0 12 12)"/><path d="M2 21l3-1M1 18l2-.5M4 23l.5-2" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/>'),
+  aim: SVG('<circle cx="12" cy="12" r="7" fill="none" stroke="#fff" stroke-width="2"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="1.6" fill="#fff"/>'),
+  reload: SVG('<path d="M19 8A8 8 0 006 6.5L4 9M5 16a8 8 0 0013 1.5l2-2.5" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><path d="M3 4v5h5M21 20v-5h-5" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'),
+  crouch: SVG('<circle cx="10" cy="4.5" r="2.3" fill="#fff"/><path d="M8 8h4l1.5 4H20v2h-7.5L11 11l-1 4 3 2v5h-2.4v-3.6L6.5 16 7.5 9z" fill="#fff"/><path d="M13 9.5h8" stroke="#fff" stroke-width="1.6"/>'),
+  sprint: SVG('<circle cx="15" cy="4" r="2.3" fill="#fff"/><path d="M8 9l4-2.5 3.5 1.5 2 3.5 3 1-.8 2-4-1.4-1.4-2-1.5 3.6 3 2.5-1.2 5.8h-2.3l1-4.7-3.4-2.4-2 3.6H3.5v-2.2h3.4L9.5 12l.5-2.3-1.2.8-1.6 2.5-1.8-1.1z" fill="#fff"/>'),
+  jump: SVG('<path d="M12 3l6 7h-4v8h-4v-8H6z" fill="#fff"/><path d="M5 21h14" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'),
+  gren: SVG('<path d="M10 5h4v2.2a6 6 0 11-4 0z" fill="#fff"/><path d="M14 5.5l3-2.5 1.5 1.5-2.5 2.5" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M9 12h6M9 15h6M12 10v8" stroke="#2b2b2b" stroke-width="1.1"/>'),
+  swap: SVG('<path d="M4 8h13l-3-3M20 16H7l3 3" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'),
+  use: SVG('<path d="M8 11V5a1.5 1.5 0 013 0v5h.5V3.5a1.5 1.5 0 013 0V10h.5V5a1.5 1.5 0 013 0v8c0 4-2.5 7-6 7-2.5 0-4-1.2-5.4-3.3L4.5 13a1.6 1.6 0 012.6-1.8z" fill="#fff"/>'),
+  pause: SVG('<rect x="6" y="5" width="4" height="14" rx="1" fill="#fff"/><rect x="14" y="5" width="4" height="14" rx="1" fill="#fff"/>'),
+  sound: SVG('<path d="M4 9h4l5-4v14l-5-4H4z" fill="#fff"/><path d="M16 8.5a5 5 0 010 7M18.5 6a8.5 8.5 0 010 12" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'),
+  mute: SVG('<path d="M4 9h4l5-4v14l-5-4H4z" fill="#fff"/><path d="M16 9l5 6M21 9l-5 6" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'),
+};
+const BTN = ['fire', 'gren', 'aim', 'reload', 'crouch', 'sprint', 'jump', 'swap', 'use'];
+touchLayer.innerHTML = `<div class="joy" data-b="joy"><div class="knob"></div></div>` + BTN.map(b => `<div class="tb tb-${b}" data-b="${b}" role="button" aria-label="${b}">${IC[b]}${b === 'gren' ? '<span class="badge">2</span>' : ''}${b === 'use' ? '<span class="lbl">REABASTECER</span>' : ''}</div>`).join('');
+// pausa e som ficam visíveis também no computador
+const topBtns = document.createElement('div'); topBtns.id = 'topbtns'; topBtns.innerHTML = `<button class="tb tb-pause" data-b="pause" aria-label="Pausar">${IC.pause}</button><button class="tb tb-sound" data-b="sound" aria-label="Som">${cfg.muted ? IC.mute : IC.sound}</button>`; root.appendChild(topBtns);
+const TEL = {}; touchLayer.querySelectorAll('[data-b]').forEach(el => TEL[el.dataset.b] = el); topBtns.querySelectorAll('[data-b]').forEach(el => TEL[el.dataset.b] = el);
+TEL.pause.addEventListener('click', () => { if (playing()) pauseScreen(); });
+TEL.sound.addEventListener('click', () => { cfg.muted = !cfg.muted; P.audio.setMuted(cfg.muted); saveCfg(); TEL.sound.innerHTML = cfg.muted ? IC.mute : IC.sound; });
+const elemRect = id => { const v = app.view; return HUD.place(app.layout, id, v.area); };
+function layoutTouch() { const L = app.layout, v = app.view; if (!v || !L) return;
+  document.documentElement.style.setProperty('--ctl-bg', `rgba(14,14,16,${cfg.opCtl})`); document.documentElement.style.setProperty('--top-bg', `rgba(14,14,16,${cfg.opTop})`);
+  const put = k => { const el = TEL[k]; if (!el || !L[k]) return; const r = elemRect(k), sz = Math.round(r.w); el.style.width = sz + 'px'; el.style.height = Math.round(r.h) + 'px'; el.style.left = Math.round(r.cx - r.w / 2) + 'px'; el.style.top = Math.round(r.cy - r.h / 2) + 'px'; el.style.opacity = L[k].a; };
+  put('joy'); for (const b of BTN) put(b); put('pause'); put('sound'); topBtns.style.display = P.sess && app.screen === 'game' || app.editing ? '' : 'none'; }
 const T = new Map();
+const hitBtn = (x, y) => { let best = null; for (const k of ['joy', ...BTN]) { const el = TEL[k]; if (!el || el.style.display === 'none' || el.classList.contains('off')) continue; const r = el.getBoundingClientRect(), pad = k === 'joy' ? 30 : 6; if (x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad) { const a = r.width * r.height; if (!best || a < best.a) best = { k, a }; } } return best && best.k; };
 touchLayer.addEventListener('touchstart', e => { e.preventDefault(); if (!playing()) return; const I = P.sess.input;
-  for (const t of e.changedTouches) { const el = document.elementFromPoint(t.clientX, t.clientY), b = el && el.closest && el.closest('[data-b]'), k = b && b.dataset.b;
-    if (k === 'pause') { pauseScreen(); continue; }
+  for (const t of e.changedTouches) { const k = hitBtn(t.clientX, t.clientY);
     if (k === 'joy' || (!k && t.clientX < app.view.W * 0.4)) { const r = TEL.joy.getBoundingClientRect(); T.set(t.identifier, { kind: 'joy', ox: r.left + r.width / 2, oy: r.top + r.height / 2, R: r.width / 2 }); moveJoy(T.get(t.identifier), t, I); continue; }
-    if (k === 'fire') { I.fire = true; TEL.fire.classList.add('on'); T.set(t.identifier, { kind: 'look', x: t.clientX, y: t.clientY, fire: true }); continue; }
-    if (k === 'use') { I.use = true; TEL.use.classList.add('on'); T.set(t.identifier, { kind: 'use' }); continue; }
-    if (k === 'aim') { I.aim = !I.aim; TEL.aim.classList.toggle('on', I.aim); continue; }
-    if (k === 'crouch') { I.crouch = !I.crouch; TEL.crouch.classList.toggle('on', I.crouch); continue; }
-    if (k === 'jump') { I.jump = true; continue; } if (k === 'reload') { I.reload = true; continue; } if (k === 'swap') { I.swap = true; continue; }
-    T.set(t.identifier, { kind: 'look', x: t.clientX, y: t.clientY }); } }, { passive: false });
-function moveJoy(st, t, I) { let dx = (t.clientX - st.ox) / st.R, dy = (t.clientY - st.oy) / st.R; const l = Math.hypot(dx, dy); if (l > 1) { dx /= l; dy /= l; } I.mx = dx; I.mz = -dy; I.sprint = l > 1.25 && -dy > 0.6; TEL.joy.firstChild.style.transform = `translate(${dx * 35}px,${dy * 35}px)`; }
+    if (k) TEL[k].classList.add('down');
+    if (k === 'fire') { I.fire = true; T.set(t.identifier, { kind: 'look', x: t.clientX, y: t.clientY, btn: k, fire: true }); continue; }
+    if (k === 'use') { I.use = true; T.set(t.identifier, { kind: 'use', btn: k }); continue; }
+    if (k === 'aim') { I.aim = !I.aim; TEL.aim.classList.toggle('on', I.aim); }
+    if (k === 'crouch') { I.crouch = !I.crouch; TEL.crouch.classList.toggle('on', I.crouch); }
+    if (k === 'sprint') { app.sprintLock = !app.sprintLock; TEL.sprint.classList.toggle('on', app.sprintLock); }
+    if (k === 'jump') I.jump = true; if (k === 'reload') I.reload = true; if (k === 'swap') I.swap = true; if (k === 'gren') I.gren = true;
+    T.set(t.identifier, { kind: k ? 'tap' : 'look', x: t.clientX, y: t.clientY, btn: k }); } }, { passive: false });
+function moveJoy(st, t, I) { let dx = (t.clientX - st.ox) / st.R, dy = (t.clientY - st.oy) / st.R; const l = Math.hypot(dx, dy); if (l > 1) { dx /= l; dy /= l; } I.mx = dx; I.mz = -dy; I.sprint = (l > 1.25 && -dy > 0.6) || (app.sprintLock && -dy > 0.3); TEL.joy.firstChild.style.transform = `translate(${dx * 35}%,${dy * 35}%)`; }
 touchLayer.addEventListener('touchmove', e => { e.preventDefault(); if (!P.sess) return; const I = P.sess.input; for (const t of e.changedTouches) { const st = T.get(t.identifier); if (!st) continue;
-  if (st.kind === 'joy') moveJoy(st, t, I); else if (st.kind === 'look') { const k = 0.0058 * cfg.sens * (I.aim ? 0.55 : 1); I.dx += (t.clientX - st.x) * k; I.dy += (t.clientY - st.y) * k; st.x = t.clientX; st.y = t.clientY; } } }, { passive: false });
-const tend = e => { if (!P.sess) return; const I = P.sess.input; for (const t of e.changedTouches) { const st = T.get(t.identifier); if (!st) continue; if (st.kind === 'joy') { I.mx = I.mz = 0; I.sprint = false; TEL.joy.firstChild.style.transform = ''; } if (st.fire) { I.fire = false; TEL.fire.classList.remove('on'); } if (st.kind === 'use') { I.use = false; TEL.use.classList.remove('on'); } T.delete(t.identifier); } };
+  if (st.kind === 'joy') moveJoy(st, t, I); else if (st.kind === 'look' || st.kind === 'tap') { const k = 0.0058 * cfg.sens * (I.aim ? 0.55 : 1); I.dx += (t.clientX - st.x) * k; I.dy += (t.clientY - st.y) * k; st.x = t.clientX; st.y = t.clientY; } } }, { passive: false });
+const tend = e => { if (!P.sess) return; const I = P.sess.input; for (const t of e.changedTouches) { const st = T.get(t.identifier); if (!st) continue; if (st.kind === 'joy') { I.mx = I.mz = 0; I.sprint = false; TEL.joy.firstChild.style.transform = ''; } if (st.fire) I.fire = false; if (st.kind === 'use') I.use = false; if (st.btn) TEL[st.btn].classList.remove('down'); T.delete(t.identifier); } };
 touchLayer.addEventListener('touchend', tend); touchLayer.addEventListener('touchcancel', tend);
+// atualiza contador de granadas e botão contextual de interação
+function updateTouchState() { const s = P.sess; if (!s) return; const me = s.me, b = TEL.gren.querySelector('.badge'), n = String(me.gren == null ? 0 : me.gren); if (b.textContent !== n) b.textContent = n; TEL.gren.classList.toggle('empty', !+n);
+  const near = !!s.nearStation; if (TEL.use.dataset.v !== String(near)) { TEL.use.dataset.v = String(near); TEL.use.style.display = near || app.editing ? '' : 'none'; } }
 
 // ---------------- editor de HUD ----------------
-const SIZES = { score: [300, 40], radar: [124, 124], feed: [220, 70], alerts: [300, 40], health: [144, 30], ammo: [200, 34], joy: [130, 130], fire: [96, 96], aim: [60, 60], jump: [60, 60], crouch: [60, 60], reload: [60, 60], swap: [60, 60], use: [60, 60] };
+// Modo exclusivo: mostra os controles reais, seleciona o elemento menor sob o dedo (sem pegar o vizinho),
+// arrasta só depois de 6 px, mantém tudo dentro da área útil e a barra de ferramentas pequena, recolhível e fora do caminho.
 function openEditor(done) {
-  const s = P.sess; if (s) s.editing = true; app.screen = 'editor'; touchLayer.style.visibility = 'hidden';
-  const L = JSON.parse(JSON.stringify(app.layout)); let sel = null;
-  show(`<div class="editor"><div class="ebar"><b>Editar HUD</b><span class="note">Arraste os elementos. Toque em um para mudar tamanho e transparência.</span>
-    <div class="ectl"><label>Tamanho <input id="esz" type="range" min="0.5" max="1.8" step="0.05" disabled></label><label>Transparência <input id="eal" type="range" min="0.2" max="1" step="0.05" disabled></label></div>
-    <div class="row"><button class="btn ghost" id="erst">Restaurar padrão</button><button class="btn ghost" id="ecn">Cancelar</button><button class="btn red" id="esv">Salvar</button></div></div><div class="eboxes"></div></div>`, 'm-editor');
-  const boxes = $('.eboxes'), V = app.view;
-  const draw = () => { boxes.innerHTML = Object.keys(L).map(k => { const [w, h] = SIZES[k] || [80, 40], o = L[k]; return `<div class="ebox ${sel === k ? 'sel' : ''}" data-k="${k}" style="left:${o.x * V.W - w * o.s / 2}px;top:${o.y * V.H - h * o.s / 2}px;width:${w * o.s}px;height:${h * o.s}px;opacity:${0.35 + o.a * 0.65}">${esc(o.label || k)}</div>`; }).join(''); };
+  const s = P.sess; if (s) s.editing = true; app.editing = true; app.screen = 'editor';
+  const por = app.portrait, L = JSON.parse(JSON.stringify(app.layout)); app.layout = L; let sel = null, collapsed = true;
+  touchLayer.style.display = touch ? 'block' : 'none'; topBtns.style.display = ''; for (const k of BTN) if (TEL[k]) TEL[k].style.display = '';
+  show(`<div class="editor"><div class="eboxes"></div>
+    <div class="ebar" role="toolbar" aria-label="Editar HUD"><div class="ebar-row"><b class="etitle">Editar HUD</b><span class="esel">Toque num elemento</span><button class="ebtn" id="ecol" aria-label="Recolher">▾</button></div>
+      <div class="ebar-body"><label>Tamanho <input id="esz" type="range" min="0.5" max="1.8" step="0.05" disabled></label><label>Opacidade <input id="eal" type="range" min="0.15" max="1" step="0.05" disabled></label>
+      <div class="ebar-row"><button class="ebtn" id="erst">Restaurar padrão</button><button class="ebtn" id="ecn">Cancelar</button><button class="ebtn save" id="esv">Salvar</button></div></div></div></div>`, 'm-editor');
+  const boxes = $('.eboxes'), bar = $('.ebar'), sz = $('#esz'), al = $('#eal'), selLbl = $('.esel');
+  const ids = Object.keys(L).filter(k => touch || !['joy', ...BTN].includes(k));
+  const draw = () => { layoutTouch(); boxes.innerHTML = ids.map(k => { const r = elemRect(k); return `<div class="ebox ${sel === k ? 'sel' : ''}" data-k="${k}" style="left:${r.cx - r.w / 2}px;top:${r.cy - r.h / 2}px;width:${r.w}px;height:${r.h}px"><span>${esc(L[k].label || k)}</span></div>`; }).join(''); placeBar(); };
+  // a barra foge do elemento selecionado (vai para cima, ou para a lateral livre)
+  // sem seleção: barra pequena no meio da tela (área livre, onde fica a mira); com seleção: vai para a metade oposta ao elemento
+  function placeBar() { bar.classList.toggle('collapsed', collapsed); $('#ecol').textContent = collapsed ? '▴' : '▾';
+    if (!sel) { bar.dataset.pos = 'mid'; return; } const r = elemRect(sel), H = app.view.H; bar.dataset.pos = r.cy > H * 0.5 ? 'top' : 'bottom'; }
+  const pick = k => { sel = k; sz.disabled = al.disabled = !k; if (k) { sz.value = L[k].s; al.value = L[k].a; selLbl.textContent = L[k].label || k; collapsed = false; } else selLbl.textContent = 'Toque num elemento'; draw(); };
+  sz.oninput = () => { if (sel) { L[sel].s = +sz.value; draw(); } }; al.oninput = () => { if (sel) { L[sel].a = +al.value; draw(); } };
+  const smallestAt = (x, y) => { let best = null; for (const k of ids) { const r = elemRect(k); if (Math.abs(x - r.cx) <= r.w / 2 + 4 && Math.abs(y - r.cy) <= r.h / 2 + 4) { const a = r.w * r.h; if (!best || a < best.a) best = { k, a }; } } return best && best.k; };
+  let drag = null;
+  boxes.addEventListener('pointerdown', e => { const k = smallestAt(e.clientX, e.clientY); if (!k) { pick(null); return; } e.preventDefault(); pick(k); const r = elemRect(k); drag = { k, x0: e.clientX, y0: e.clientY, ox: e.clientX - r.cx, oy: e.clientY - r.cy, moving: false, id: e.pointerId }; try { boxes.setPointerCapture(e.pointerId); } catch (er) {} });
+  boxes.addEventListener('pointermove', e => { if (!drag || e.pointerId !== drag.id) return; if (!drag.moving && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 6) return; drag.moving = true; const A = app.view.area;
+    L[drag.k].x = HUD.clampV((e.clientX - drag.ox - A.x) / A.w); L[drag.k].y = HUD.clampV((e.clientY - drag.oy - A.y) / A.h); draw(); });
+  const endDrag = e => { if (drag && e.pointerId === drag.id) { const r = elemRect(drag.k), A = app.view.area; L[drag.k].x = (r.cx - A.x) / A.w; L[drag.k].y = (r.cy - A.y) / A.h; drag = null; draw(); } };
+  boxes.addEventListener('pointerup', endDrag); boxes.addEventListener('pointercancel', endDrag);
+  $('#ecol').onclick = () => { collapsed = !collapsed; placeBar(); };
+  const close = () => { app.editing = false; if (s) s.editing = false; touchLayer.style.display = touch && P.sess ? 'block' : 'none'; layoutTouch(); (done || menu)(); };
+  $('#esv').onclick = () => { HUD.save(touch, por, L); app.layout = HUD.load(touch, por); toast('HUD salvo.'); close(); };
+  $('#ecn').onclick = () => { app.layout = HUD.load(touch, por); close(); };
+  $('#erst').onclick = () => { const d = HUD.reset(touch, por); for (const k in d) L[k] = d[k]; pick(null); };
   draw();
-  const sz = $('#esz'), al = $('#eal');
-  const pick = k => { sel = k; sz.disabled = al.disabled = false; sz.value = L[k].s; al.value = L[k].a; draw(); };
-  sz.oninput = () => { if (sel) { L[sel].s = +sz.value; draw(); app.layout = L; } }; al.oninput = () => { if (sel) { L[sel].a = +al.value; draw(); app.layout = L; } };
-  let dragK = null, off = null;
-  boxes.addEventListener('pointerdown', e => { const b = e.target.closest('.ebox'); if (!b) return; e.preventDefault(); pick(b.dataset.k); dragK = b.dataset.k; off = [e.clientX - L[dragK].x * V.W, e.clientY - L[dragK].y * V.H]; boxes.setPointerCapture(e.pointerId); });
-  boxes.addEventListener('pointermove', e => { if (!dragK) return; L[dragK].x = HUD.clampV((e.clientX - off[0]) / V.W); L[dragK].y = HUD.clampV((e.clientY - off[1]) / V.H); app.layout = L; draw(); });
-  boxes.addEventListener('pointerup', () => { dragK = null; });
-  const prev = JSON.parse(JSON.stringify(app.layout_saved || HUD.load(touch)));
-  const close = () => { if (s) s.editing = false; touchLayer.style.visibility = ''; layoutTouch(); (done || menu)(); };
-  $('#esv').onclick = () => { app.layout = L; HUD.save(touch, L); app.layout_saved = L; toast('HUD salvo.'); close(); };
-  $('#ecn').onclick = () => { app.layout = HUD.load(touch); close(); };
-  $('#erst').onclick = () => { const d = HUD.reset(touch); for (const k in d) L[k] = d[k]; app.layout = L; sel = null; draw(); };
 }
 
 // ---------------- laço principal ----------------
@@ -316,9 +383,9 @@ function loop(now) {
   const dt = Math.min(0.05, Math.max(0, (now - app.last) / 1000)); app.last = now;
   app.fpsN++; app.fpsT += dt; if (app.fpsT > 1) { app.fps = app.fpsN / app.fpsT; app.fpsN = 0; app.fpsT = 0; }
   if (!P.R) return;
-  const v = app.view; v.layout = app.layout; v.showFps = cfg.showFps; v.fps = app.fps;
-  if (P.sess) P.frame(dt, v);
-  else { P.renderScene(P.menuCamera(now / 1000), glc.width / glc.height); hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, hud.width, hud.height); }
+  const v = app.view; v.layout = app.layout; v.showFps = cfg.showFps; v.fps = app.fps; v.op = { top: cfg.opTop, ctl: cfg.opCtl };
+  if (P.sess) { P.frame(dt, v); updateTouchState(); }
+  else { P.applyEnv(0.735); P.renderScene(P.menuCamera(now / 1000), glc.width / glc.height); hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, hud.width, hud.height); }
 }
 function boot() {
   resize();

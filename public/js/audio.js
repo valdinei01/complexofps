@@ -3,8 +3,8 @@
 (function () {
 'use strict';
 function makeAudio() {
-  let ctx = null, master = null, comp = null, volume = 0.8;
-  const buf = { rifle: null, pistol: null }, src = { rifle: null, pistol: null };
+  let ctx = null, master = null, comp = null, volume = 0.8, muted = false;
+  const buf = { rifle: null, pistol: null }, src = { rifle: null, pistol: null }, amb = [], ambSrc = []; let ambActive = [];
   const voices = []; const lastByShooter = new Map(); let lastWhizz = 0, whizzActive = 0, noise = null;
   const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   function ensure() {
@@ -13,6 +13,7 @@ function makeAudio() {
     ctx = new AC(); comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 6; comp.connect(ctx.destination);
     master = ctx.createGain(); master.gain.value = volume; master.connect(comp);
     for (const k of ['rifle', 'pistol']) if (src[k] && !buf[k]) decode(k);
+    loadAmb();
     return ctx;
   }
   function decode(k) {
@@ -21,9 +22,24 @@ function makeAudio() {
     if (s.startsWith('data:')) { const bin = atob(s.split(',')[1]), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); go(u8.buffer); }
     else fetch(s).then(r => r.arrayBuffer()).then(go).catch(() => {});
   }
+  // gravações longas de tiroteio (os áudios enviados) para o som ambiente de confronto perto do jogador
+  function loadAmb() { if (!ctx || amb.length || !ambSrc.length) return; ambSrc.forEach((u, i) => { const go = ab => { let ok = false; const fin = b => { if (b && !ok) { ok = true; amb[i] = b; } }; try { const p = ctx.decodeAudioData(ab, fin, () => {}); if (p && p.then) p.then(fin).catch(() => {}); } catch (e) {} };
+    if (u.startsWith('data:')) { const bin = atob(u.split(',')[1]), u8 = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) u8[k] = bin.charCodeAt(k); go(u8.buffer); } else fetch(u).then(r => r.arrayBuffer()).then(go).catch(() => {}); }); }
+  function loadAmbient(urls) { ambSrc.push(...urls); if (ctx) loadAmb(); }
+  // toca uma gravação inteira (até 2 ao mesmo tempo) na direção do tiroteio; intensidade 0..1
+  function ambient(x, y, z, dist, intensity) {
+    if (!ensure()) return false; const now = ctx.currentTime; ambActive = ambActive.filter(v => v.end > now + 0.4); const list = amb.filter(Boolean); if (!list.length || ambActive.length >= 2) return false;
+    if (ambActive.length && ambActive[0].start > now - 1.8) return false; // espaça as camadas
+    const b = list[Math.floor(Math.random() * list.length)], s2 = ctx.createBufferSource(); s2.buffer = b; s2.playbackRate.value = 0.94 + Math.random() * 0.1;
+    const g = ctx.createGain(), f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = Math.max(900, 14000 * Math.pow(15 / Math.max(15, dist), 0.9));
+    const vol = Math.min(0.55, 0.28 + 0.3 * intensity) * Math.pow(20 / Math.max(20, dist), 0.7); g.gain.setValueAtTime(0.0001, now); g.gain.exponentialRampToValueAtTime(Math.max(0.002, vol), now + 0.25);
+    const p = panner(x, y, z); p.refDistance = 14; p.rolloffFactor = 0.6; s2.connect(f); f.connect(g); g.connect(p); p.connect(master); s2.start(now);
+    ambActive.push({ s: s2, g, start: now, end: now + b.duration / s2.playbackRate.value }); return true;
+  }
+  function ambientFade() { if (!ctx) return; const now = ctx.currentTime; for (const v of ambActive) { if (v.fading) continue; v.fading = true; try { v.g.gain.cancelScheduledValues(now); v.g.gain.setValueAtTime(v.g.gain.value, now); v.g.gain.linearRampToValueAtTime(0.0001, now + 1.5); v.s.stop(now + 1.6); } catch (e) {} } }
   function load(urls) { Object.assign(src, urls); if (ctx) for (const k in urls) decode(k); }
   const getNoise = () => { if (noise) return noise; const b = ctx.createBuffer(1, ctx.sampleRate * 0.6, ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return noise = b; };
-  function setListener(x, y, z, yaw, pitch) {
+  function setListener(x, y, z, yaw, pitch) { if (![...arguments].every(v => typeof v !== 'number' || Number.isFinite(v))) return;
     if (!ctx) return; const L = ctx.listener, fx = Math.sin(yaw) * Math.cos(pitch), fy = Math.sin(pitch), fz = Math.cos(yaw) * Math.cos(pitch);
     if (L.positionX) { const t = ctx.currentTime; L.positionX.setValueAtTime(x, t); L.positionY.setValueAtTime(y, t); L.positionZ.setValueAtTime(z, t); L.forwardX.setValueAtTime(fx, t); L.forwardY.setValueAtTime(fy, t); L.forwardZ.setValueAtTime(fz, t); L.upX.setValueAtTime(0, t); L.upY.setValueAtTime(1, t); L.upZ.setValueAtTime(0, t); }
     else { L.setPosition(x, y, z); L.setOrientation(fx, fy, fz, 0, 1, 0); }
@@ -58,8 +74,15 @@ function makeAudio() {
   function blip(fr, d, type, vol) { if (!ensure()) return; const now = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(); o.type = type || 'square'; o.frequency.setValueAtTime(fr, now); g.gain.setValueAtTime(vol || 0.1, now); g.gain.exponentialRampToValueAtTime(0.001, now + d); o.connect(g); g.connect(master); o.start(now); o.stop(now + d + 0.02); }
   function thud() { if (!ensure()) return; const now = ctx.currentTime, s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(); s.buffer = getNoise(); f.type = 'lowpass'; f.frequency.value = 420; g.gain.setValueAtTime(0.45, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.2); s.connect(f); f.connect(g); g.connect(master); s.start(now, 0, 0.22); }
   function step(x, y, z) { if (!ensure()) return; const now = ctx.currentTime, s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(); s.buffer = getNoise(); f.type = 'bandpass'; f.frequency.value = 650 + Math.random() * 300; g.gain.setValueAtTime(0.35, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.07); const p = panner(x, y, z); p.refDistance = 2; p.rolloffFactor = 1.6; s.connect(f); f.connect(g); g.connect(p); p.connect(master); s.start(now, Math.random() * 0.3, 0.08); }
-  function setVolume(v) { volume = v; if (master) master.gain.value = v; }
-  return { ensure, load, setListener, shot, whizz, blip, thud, step, setVolume, get ready() { return !!(buf.rifle && buf.pistol); }, get voices() { return voices.length; }, close() { if (ctx && ctx.close) ctx.close(); ctx = null; } };
+  // explosão de granada: estrondo grave + chiado, com posição 3D e abafamento por paredes
+  function boom(x, y, z, dist, occluded) {
+    if (!ensure()) return; const now = ctx.currentTime, g = ctx.createGain(), f = ctx.createBiquadFilter(), n = ctx.createBufferSource(); n.buffer = getNoise(); f.type = 'lowpass';
+    f.frequency.value = Math.max(400, (occluded ? 900 : 4200) * Math.pow(10 / Math.max(10, dist), 0.6)); const vol = Math.min(1.4, 1.6 * Math.pow(12 / Math.max(12, dist), 0.9));
+    g.gain.setValueAtTime(vol, now); g.gain.exponentialRampToValueAtTime(0.001, now + 1.1); const p = panner(x, y, z); p.refDistance = 8; n.connect(f); f.connect(g); g.connect(p); p.connect(master); n.start(now, 0, 0.6);
+    const o = ctx.createOscillator(), og = ctx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(90, now); o.frequency.exponentialRampToValueAtTime(32, now + 0.5); og.gain.setValueAtTime(vol * 0.9, now); og.gain.exponentialRampToValueAtTime(0.001, now + 0.6); o.connect(og); og.connect(p); o.start(now); o.stop(now + 0.65);
+  }
+  function setVolume(v) { volume = v; if (master && !muted) master.gain.value = v; }
+  return { ensure, load, loadAmbient, ambient, ambientFade, setListener, shot, whizz, boom, blip, thud, step, setVolume, setMuted(m) { muted = m; if (master) master.gain.value = m ? 0 : volume; }, get muted() { return muted; }, get ready() { return !!(buf.rifle && buf.pistol); }, get voices() { return voices.length; }, close() { if (ctx && ctx.close) ctx.close(); ctx = null; } };
 }
 window.EscAudio = makeAudio;
 })();
