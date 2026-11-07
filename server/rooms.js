@@ -51,6 +51,11 @@ class RoomManager {
     on('lobby:diff', d => this.withRoom(me, (r, p) => { if (r.host !== p.key || r.state !== 'lobby') return; if (S.DIFF_FPS[d && d.diff]) r.diff = d.diff; this.sendLobby(r); }));
     on('lobby:start', (d, cb) => this.withRoom(me, (r, p) => { if (r.host !== p.key) return cb && cb({ error: 'Só o anfitrião pode iniciar.' }); if (r.state !== 'lobby') return cb && cb({ error: 'A partida já começou.' }); this.start(r); cb && cb({ ok: true }); }));
     on('game:input', d => this.input(me, d));
+    // ---- chat de voz (WebRTC ponto a ponto); o áudio não passa pelo servidor ----
+    on('voice:signal', d => { if (!d || typeof d !== 'object') return; const r = me.room && this.rooms.get(me.room); if (!r || r.state !== 'playing') return; const from = r.players.get(me.key); if (!from || !from.actor) return;
+      const nowT = this.now(); if (!me.vsT || nowT - me.vsT > 60000) { me.vsT = nowT; me.vs = 0; } if (++me.vs > 600) return; // limite: 600 mensagens por minuto
+      for (const p of r.players.values()) if (p.actor && p.actor.id === d.to && p.connected) { const sk = this.socks.get(p.sid); if (sk) sk.s.emit('voice:signal', { from: from.actor.id, data: d.data }); } });
+    on('voice:state', d => { const r = me.room && this.rooms.get(me.room); if (!r) return; const p = r.players.get(me.key); if (!p || !p.actor) return; p.mic = !!(d && d.on); this.io.to('room:' + r.id).emit('voice:state', { id: p.actor.id, on: p.mic }); });
     on('game:back', () => this.withRoom(me, (r, p) => { if (r.state === 'ended' && r.host === p.key) this.toLobby(r); }));
     on('disconnect', () => { this.socks.delete(s.id); const r = me.room && this.rooms.get(me.room); if (!r) return; const p = r.players.get(me.key); if (p && p.sid === s.id) { p.connected = false; p.lostAt = this.now(); if (p.actor) p.actor.in = Object.assign(p.actor.in, { mx: 0, mz: 0, fire: false, use: false }); this.sendLobby(r); this.dirty(); } });
   }
@@ -149,9 +154,9 @@ class RoomManager {
     const bases = G.bases.map(b => [b.owner, Math.round(b.prog * 1000) / 1000, b.state, b.inside[0], b.inside[1]]);
     const ev = G.events.map(e => { const o = {}; for (const k in e) o[k] = typeof e[k] === 'number' && !Number.isInteger(e[k]) ? Math.round(e[k] * 100) / 100 : e[k]; return o; }); G.events.length = 0;
     const cars = G.cars.map(c => [q(c.s), q(c.spd)]), gr = G.grenades.map(g => [g.id, q(g.x), q(g.y), q(g.z)]);
-    const base = { t: Math.round(G.t * 100) / 100, dn: Math.round(G.dayT * 1e5) / 1e5, gr, a: actors, n: npcs, c: cars, b: bases, s: [Math.round(G.score[0] * 100) / 100, Math.round(G.score[1] * 100) / 100], tl: Math.round(G.timeLeft), ev };
+    const base = { t: Math.round(G.t * 100) / 100, dn: Math.round(G.dayT * 1e5) / 1e5, bl: [G.baile.on ? 1 : 0, Math.round(G.baile.t0 * 100) / 100], gr, a: actors, n: npcs, c: cars, b: bases, s: [Math.round(G.score[0] * 100) / 100, Math.round(G.score[1] * 100) / 100], tl: Math.round(G.timeLeft), ev };
     for (const p of r.players.values()) { const sk = this.socks.get(p.sid); if (!sk || !p.connected || !p.actor) continue; const a = p.actor;
-      const me = { id: a.id, hp: Math.round(a.hp), alive: a.alive, rt: Math.max(0, Math.round(a.respawnT * 10) / 10), cur: a.cur, am: [a.ammo.rifle.mag, a.ammo.rifle.res, a.ammo.pistol.mag, a.ammo.pistol.res], rl: Math.round(a.reloadT * 100) / 100, sw: Math.round(a.swapT * 100) / 100, rf: Math.round(a.refillT * 100) / 100, rfc: Math.round(a.refillCd * 10) / 10, near: G.nearStation(a), inv: a.invuln > 0, gn: a.gren || 0 };
+      const me = { id: a.id, hp: Math.round(a.hp), alive: a.alive, rt: Math.max(0, Math.round(a.respawnT * 10) / 10), cur: a.cur, am: [a.ammo.rifle.mag, a.ammo.rifle.res, a.ammo.pistol.mag, a.ammo.pistol.res], rl: Math.round(a.reloadT * 100) / 100, sw: Math.round(a.swapT * 100) / 100, rf: Math.round(a.refillT * 100) / 100, rfc: Math.round(a.refillCd * 10) / 10, near: G.nearStation(a), desk: G.nearDesk(a) ? 1 : 0, inv: a.invuln > 0, gn: a.gren || 0 };
       const justSpawned = a.alive && !p.wasAlive; p.wasAlive = a.alive;
       if (p.correct || !a.alive || justSpawned) { me.pos = [q(a.x), q(a.y), q(a.z)]; me.cor = 1; p.correct = false; }
       sk.s.emit('game:snap', Object.assign({ me }, base)); }
