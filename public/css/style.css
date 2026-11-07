@@ -123,7 +123,8 @@ input[type=checkbox]{width:auto;min-height:0;accent-color:var(--red)}
 .tb-use{border-color:#FFD24A;background:rgba(60,48,12,.8)}
 .tb-use .lbl{position:absolute;top:100%;margin-top:3px;font:700 9px Rubik,sans-serif;color:#FFD24A;text-shadow:0 1px 2px #000;white-space:nowrap}
 #topbtns .tb{position:fixed;z-index:12;border-radius:10px;background:var(--top-bg)}
-#topbtns .tb-sound{border-radius:50%}
+#topbtns .tb-sound,#topbtns .tb-mic{border-radius:50%}
+#topbtns .tb-mic.on{border-color:#7BE07B;background:rgba(20,60,24,.8)}
 /* editor de HUD */
 .ui.m-editor{background:rgba(0,0,0,.18);padding:0;pointer-events:auto}
 .editor{position:absolute;inset:0}
@@ -147,3 +148,6 @@ input[type=checkbox]{width:auto;min-height:0;accent-color:var(--red)}
 @media (max-width:560px){.teams{grid-template-columns:1fr}.room{grid-template-columns:1fr auto}.room .rc{grid-column:1/-1;align-items:flex-start;flex-direction:row}.panel h2{font-size:20px}}
 @media (max-height:620px){.menu{padding-top:4px}.logo .l1{font-size:24px}.logo .l2{font-size:48px}.logo .l3{margin-top:4px;font-size:11px}.mbtns{gap:6px;margin-top:10px}.mb{min-height:40px;padding:7px 14px;font-size:16px}.mb.main{min-height:46px;font-size:19px}.mb svg{width:20px;height:20px}.who{margin-top:8px}}
 @media (max-height:420px){.menu{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:start;max-width:none}.mbtns{margin-top:0}.who{grid-column:1/-1}}
+
+/* diálogos sempre cabem na tela (celular deitado): rolam por dentro */
+.mcard{max-height:calc(100dvh - 24px);overflow-y:auto;-webkit-overflow-scrolling:touch}
