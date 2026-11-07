@@ -18,6 +18,10 @@ FPS multiplayer de navegador ambientado numa comunidade carioca fictícia. Modo 
 
 Quando outros jogadores trocam tiros por perto, o jogo toca as gravações longas de tiroteio (`public/audio/ambiente`) na direção do confronto, até duas ao mesmo tempo.
 
+**Baile**: no palco da Quadra do Baile há uma mesa de som. Perto dela, aperte E (ou toque em SOM DO BAILE) para ligar/desligar a música (`public/audio/baile.mp3`). O estado fica no servidor, todos ouvem o mesmo trecho, e o volume vai a zero a ~38 m do palco.
+
+**Chat de voz por proximidade** (salas online): botão de microfone ao lado do som. O áudio vai direto entre os navegadores (WebRTC); o servidor só repassa a sinalização entre jogadores da mesma sala. Volume cheio até 4 m e some aos 28 m. Usa servidores STUN públicos do Google; em algumas redes muito restritas (sem TURN) a voz pode não conectar. O navegador pede permissão para o microfone (precisa de HTTPS — o Render já fornece).
+
 O ciclo de **dia e noite** dura 20 minutos (configurável em `CONFIG.dayLength`). Postes, janelas, refletores e faróis acendem ao escurecer.
 
 ## Construções 3D próprias
@@ -65,7 +69,7 @@ npm test
 ```
 
 Roda a simulação (mapa, colisões, munição, dominação, civis, bots) e o sistema de salas com um simulador da interface do Socket.IO.
-Os testes de navegador (`tests/ui.browser.js`, `tests/online.browser.js`) usam Playwright e não fazem parte do `npm test`.
+Os testes de navegador (`tests/ui.browser.js`, `tests/online.browser.js e tests/voice.browser.js`) usam Playwright e não fazem parte do `npm test`.
 
 ## Estrutura
 
