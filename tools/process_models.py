@@ -180,7 +180,10 @@ def simplify(P, N, UV, I, grid, uvgrid):
     key = ((q[:, 0] * (grid + 1) + q[:, 1]) * (grid + 1) + q[:, 2]) * (uvgrid * uvgrid) + quv[:, 0] * uvgrid + quv[:, 1]
     uniq, cid = np.unique(key, return_inverse=True)
     k = len(uniq); cnt = np.bincount(cid, minlength=k).astype(np.float32)[:, None]
-    P2 = np.zeros((k, 3), np.float64); np.add.at(P2, cid, P); P2 /= cnt
+    # posição: média por célula de POSIÇÃO (igual para todos os pedaços de UV daquela célula) — evita frestas nas emendas
+    pkey = (q[:, 0] * (grid + 1) + q[:, 1]) * (grid + 1) + q[:, 2]; pu, pid = np.unique(pkey, return_inverse=True)
+    PP = np.zeros((len(pu), 3), np.float64); np.add.at(PP, pid, P); PP /= np.bincount(pid).astype(np.float64)[:, None]
+    P2 = np.zeros((k, 3), np.float64); P2[cid] = PP[pid]
     N2 = np.zeros((k, 3), np.float64); np.add.at(N2, cid, N); N2 /= np.maximum(np.linalg.norm(N2, axis=1, keepdims=True), 1e-6)
     U2 = np.zeros((k, 2), np.float64); np.add.at(U2, cid, UV); U2 /= cnt
     T = cid[I.reshape(-1, 3)]
@@ -210,7 +213,7 @@ def process(path, outdir, name):
     P = accessor(js, binc, at['POSITION'], cache); N = accessor(js, binc, at['NORMAL'], cache); UV = accessor(js, binc, at['TEXCOORD_0'], cache); I = accessor(js, binc, prim['indices'], cache)
     assert I.max() < len(P), 'índices fora do limite'
     lods = []; blobs = b''
-    for max_tris in (14000, 2600, 900):   # perto, médio e longe
+    for max_tris in (14000, 5200, 2200):   # perto, médio e longe
         p, n, u, t, grid = target_simplify(P, N, UV, I, max_tris)
         hdr, blob = pack(p, n, u, t); hdr['offset'] = len(blobs); hdr['grid'] = grid; lods.append(hdr); blobs += blob
         while len(blobs) % 4: blobs += b'\x00'
@@ -221,7 +224,15 @@ def process(path, outdir, name):
     # textura de cor (a primeira) reduzida
     tex = js['materials'][0]['pbrMetallicRoughness']['baseColorTexture']['index']; img = js['images'][js['textures'][tex]['source']]
     bv = js['bufferViews'][img['bufferView']]; im = Image.open(io.BytesIO(binc[bv.get('byteOffset', 0):bv.get('byteOffset', 0) + bv['byteLength']])).convert('RGB')
-    im.resize((1024, 1024), Image.LANCZOS).save(os.path.join(outdir, name + '.jpg'), quality=82, optimize=True, progressive=False)
+    im = im.resize((1024, 1024), Image.LANCZOS)
+    # preenche o fundo da textura (fora das "ilhas" de UV) com a cor da ilha mais próxima: a malha simplificada
+    # às vezes amostra um pouco fora da ilha e mostraria riscos claros nas emendas
+    from scipy import ndimage
+    R = 1024; u = np.clip((np.mod(UV[:, 0], 1.0) * R).astype(int), 0, R - 1); v = np.clip((np.mod(UV[:, 1], 1.0) * R).astype(int), 0, R - 1)
+    mask = np.zeros((R, R), bool); mask[v, u] = True
+    mask = ndimage.binary_closing(mask, structure=np.ones((3, 3)), iterations=3); mask = ndimage.binary_fill_holes(mask); mask = ndimage.binary_erosion(mask, iterations=1)
+    arr = np.asarray(im).copy(); _, (iy, ix) = ndimage.distance_transform_edt(~mask, return_indices=True); arr = arr[iy, ix]
+    Image.fromarray(arr).save(os.path.join(outdir, name + '.jpg'), quality=84, optimize=True, progressive=False)
     return meta
 
 if __name__ == '__main__':
