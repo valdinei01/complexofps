@@ -8,31 +8,22 @@ FPS multiplayer de navegador ambientado numa comunidade carioca fictícia. Modo 
 
 - **Base Azul (Alto da Mata)**: clareira no alto, canto superior esquerdo.
 - **Base Vermelha (Morro do Cruzeiro)**: clareira no alto, canto superior direito, com o cruzeiro e a antena.
-- **Base A**: clareira no meio da mata, no alto. **Base B**: Praça Central. **Base C**: perto do canal, na favela da direita.
+- **Base A**: clareira no meio da mata, de frente para a ponte do meio. **Base B**: Praça Central. **Base C**: dentro da Quadra do Baile.
 - **Mata Central** com trilhas de terra, clareiras, palmeiras, árvores, pedras e arbustos. As copas tapam a visão (não as balas).
 - **Favela do Escadão** (esquerda): Vila da Serra, Escadão Principal com a bandeira pintada nos degraus (sobe da Praça Central até a plataforma do Alto do Escadão e desce do outro lado até a Saída do Alto) e Beco da Mina.
 - **Avenida das Américas** (uma faixa por sentido, carros nos dois sentidos) e o **canal / valão** com contenção, margens e três pontes.
 - **Favela do Valão** (direita): Vila do Valão, Quadra do Baile (alambrado, arquibancada, palco e refletores), Vila Nova e Lajes do Topo.
 - **Passagem de baixo**: rua que liga as duas favelas à avenida, com ponte sobre o canal.
-- **Construções 3D** (pasta `public/models`): seis modelos detalhados, colocados automaticamente em lotes de frente para as ruas.
 
 Quando outros jogadores trocam tiros por perto, o jogo toca as gravações longas de tiroteio (`public/audio/ambiente`) na direção do confronto, até duas ao mesmo tempo.
 
 **Baile**: no palco da Quadra do Baile há uma mesa de som. Perto dela, aperte E (ou toque em SOM DO BAILE) para ligar/desligar a música (`public/audio/baile.mp3`). O estado fica no servidor, todos ouvem o mesmo trecho, e o volume vai a zero a ~38 m do palco.
 
-**Chat de voz por proximidade** (salas online): botão de microfone ao lado do som. O áudio vai direto entre os navegadores (WebRTC); o servidor só repassa a sinalização entre jogadores da mesma sala. Volume cheio até 4 m e some aos 28 m. Usa servidores STUN públicos do Google; em algumas redes muito restritas (sem TURN) a voz pode não conectar. O navegador pede permissão para o microfone (precisa de HTTPS — o Render já fornece).
+**Chat de voz por proximidade** (salas online): botão de microfone ao lado do som. O microfone é enviado em pedaços pequenos e comprimidos pelo próprio Socket.IO do jogo; o servidor repassa cada pedaço só para quem está a até 30 m de quem fala (volume cheio até 4 m). Não depende de conexão direta entre os jogadores. O navegador pede permissão para o microfone (precisa de HTTPS — o Render já fornece).
+
+**Entrar numa sala**: o jogador escolhe Azul ou Vermelho. Se o time estiver completo com bots, um bot sai e o jogador assume o lugar dele (também com a partida em andamento); ao sair, o personagem volta a ser bot.
 
 O ciclo de **dia e noite** dura 20 minutos (configurável em `CONFIG.dayLength`). Postes, janelas, refletores e faróis acendem ao escurecer.
-
-## Construções 3D próprias
-
-Os modelos `.glb` originais (15–20 MB cada, até 925 mil triângulos) são convertidos com:
-
-```bash
-python3 tools/process_models.py <pasta com os .glb> public/models
-```
-
-O script decodifica a compressão meshopt, gera duas versões simplificadas (perto e longe) e reduz a textura para 1024 px. Para incluir um modelo novo, adicione o nome em `MODEL_DEFS`/`MODEL_COUNT` (shared/_map.js) e em `EscModels.list` (public/js/models.js).
 
 ## Como rodar no seu computador
 

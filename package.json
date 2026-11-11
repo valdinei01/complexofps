@@ -1,6 +1,6 @@
 {
   "name": "complexo-do-escadao-3d",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "FPS multiplayer de navegador ambientado numa comunidade carioca fictícia — modo Dominação de Bases.",
   "main": "server.js",
   "scripts": {
