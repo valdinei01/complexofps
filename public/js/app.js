@@ -4,7 +4,7 @@
 const S = window.EscSim, P = window.EscPlay, HUD = window.EscHUD;
 const $ = (q, el) => (el || document).querySelector(q);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const VERSION = '2.5.0';
+const VERSION = '2.8.0';
 const store = { get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 const cfg = P.cfg = Object.assign({ name: '', quality: 'medio', sens: 1, volume: 0.8, diff: 'normal', team: 0, showFps: false, opTop: 0.65, opCtl: 0.6, muted: false, aimAssist: true }, store.get('escadao3d-cfg', {}));
 const saveCfg = () => store.set('escadao3d-cfg', cfg);
@@ -20,6 +20,9 @@ const root = $('#app'), glc = $('#gl'), hud = $('#hud'), ui = $('#ui'), touchLay
 const hctx = hud.getContext('2d');
 P.audio = window.EscAudio(); P.audio.setVolume(cfg.volume); P.audio.setMuted(!!cfg.muted);
 P.voice = window.EscVoice ? window.EscVoice.create(P) : null;
+// o navegador só libera o áudio depois de um toque/clique: garante isso em qualquer interação e ao voltar para a aba
+for (const ev of ['pointerdown', 'touchend', 'keydown']) window.addEventListener(ev, () => { if (P.audio) P.audio.ensure(); }, { passive: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && P.audio && P.audio.context()) P.audio.ensure(); });
 P.audio.load({ rifle: window.ESC_AUDIO ? window.ESC_AUDIO.rifle : '/audio/fuzil.mp3', pistol: window.ESC_AUDIO ? window.ESC_AUDIO.pistol : '/audio/pistola.mp3' });
 P.audio.loadBaile(window.ESC_AUDIO && window.ESC_AUDIO.baile ? window.ESC_AUDIO.baile : '/audio/baile.mp3');
 P.audio.loadAmbient(window.ESC_AUDIO && window.ESC_AUDIO.amb ? window.ESC_AUDIO.amb : [1, 2, 3, 4].map(k => '/audio/ambiente/tiroteio_' + k + '.mp3'));
@@ -96,6 +99,23 @@ function newsScreen() {
   app.screen = 'news';
   show(`<div class="panel">${back()}<h2>Novidades</h2><div class="news">
     <h4>Versão ${VERSION}</h4><ul>
+    <li><b>Mapa 25% maior</b> em cada direção (312 × 176 m) e <b>mata bem mais densa</b>.</li>
+    <li><b>Bases no interior</b>: Base A no Coração da Mata, Base B no Largo da Serra (fundo da favela do Escadão) e Base C na Quadra do Baile, que foi junto para o fundo da favela do Valão.</li>
+    <li><b>Polícia</b>: 3 viaturas e 15 policiais por operação; o horário e a duração de cada operação são sorteados, sem padrão.</li>
+    <li><b>Sirene realista</b>: uivo e ié-ié alternados, uma sirene por viatura, e só dá para ouvir chegando perto (até ~70 m).</li></ul>
+    <h4>Versão 2.7.0</h4><ul>
+    <li><b>Polícia</b>: de tempos em tempos (a primeira aos 2min30) a polícia escolhe um time e faz uma operação na favela dele. Duas viaturas descem a Avenida das Américas com a sirene ligada, entram pela passagem de baixo, oito policiais desembarcam e tentam tomar as bases daquela favela. Base ocupada pela polícia não pontua para ninguém. A operação acaba quando todos os policiais caem ou depois de cerca de 3 minutos.</li>
+    <li><b>Atropelamento</b>: quem entra na frente de um carro em movimento morre. Os carros ainda freiam para quem está a uma distância segura.</li>
+    <li><b>Caveirinha de abate</b> no meio da tela ao derrubar alguém, e caveira com tiro na cabeça e alvo vermelho no HEADSHOT. Abates seguidos mostram a contagem.</li>
+    <li>Base A mais para dentro da mata.</li></ul>
+    <h4>Versão 2.6.0</h4><ul>
+    <li><b>Chat de voz refeito</b>: agora passa pelo servidor e funciona em qualquer rede em que o jogo funciona. Só quem está a até 30 m ouve.</li>
+    <li><b>Som corrigido</b>: o áudio é liberado no primeiro toque e, no iPhone, toca mesmo com a chave do silencioso ligada.</li>
+    <li><b>Escolha de time ao entrar</b>: ao entrar numa sala você escolhe Azul ou Vermelho. Se o time estiver completo com bots, um bot sai e você entra no lugar dele, mesmo com a partida em andamento. Quando você sai, o bot volta.</li>
+    <li><b>Bases reposicionadas</b>: Base A numa clareira no meio da mata, Base C dentro da Quadra do Baile.</li>
+    <li><b>Casas reestruturadas</b>: nenhuma casa com menos de 4 m de largura.</li>
+    <li><b>Visual low poly</b>: árvores, palmeiras, pedras e arbustos facetados e texturas mais chapadas. Os modelos 3D enviados foram retirados.</li></ul>
+    <h4>Versão 2.5.0</h4><ul>
     <li><b>Som do baile</b>: suba no palco da Quadra do Baile e use a mesa de som (E ou INTERAGIR) para ligar ou desligar a música. Ela só é ouvida de perto, e todos na sala escutam o mesmo trecho.</li>
     <li><b>Chat de voz por proximidade</b> nas salas online: ligue o microfone no botão ao lado do som. Quem estiver a até ~28 m ouve você, mais alto quanto mais perto; um ícone mostra quem está falando.</li>
     <li>Construções 3D posicionadas perto da Praça, da Quadra, da Base C e das ruas principais, e um pouco mais claras.</li>
@@ -183,6 +203,8 @@ function connect(then) {
     s.on('lobby:state', st => { app.lobby = st; app.room = st.id; if (app.screen === 'lobby') renderLobby(); });
     s.on('lobby:back', () => { if (P.sess) endGame(); lobbyScreen(); });
     s.on('game:start', d => startOnline(d));
+    s.on('game:roster', d => { if (P.sess && P.sess.mode === 'online') P.setRoster(P.sess, d); });
+    s.on('game:notice', d => { if (d && d.text && P.sess) P.notice(P.sess, d.text); });
     s.on('room:closed', () => { app.room = null; app.lobby = null; if (P.sess) endGame(); toast('A sala foi encerrada.'); roomsScreen(); });
   }
   app.pendingConnect = then; if (app.socket.connected && app.helloOk && then) { app.pendingConnect = null; then(); }
@@ -218,11 +240,21 @@ function createDialog() {
   $('#ok', m).onclick = () => { createRoom({ name: $('#rn', m).value, pass: $('#rp', m).value, bots0: +$('#b0', m).value, bots1: +$('#b1', m).value, diff: $('#df', m).value }); m.remove(); };
 }
 function createRoom(o) { connect(() => app.socket.emit('room:create', o, r => { if (r && r.ok) { app.room = r.id; lobbyScreen(); } else toast((r && r.error) || 'Não foi possível criar a sala.', true); })); }
-function joinRoom(id, pass) {
-  connect(() => app.socket.emit('room:join', { id, pass }, r => {
+// entrar numa sala: primeiro o jogador escolhe o time (vê quantos jogadores e bots há em cada um)
+function joinRoom(id, pass, team) {
+  if (team == null) return connect(() => app.socket.emit('room:info', { id }, inf => {
+    if (!inf || inf.error) { toast((inf && inf.error) || 'Sala não encontrada.', true); return; }
+    const T = inf.teams || [{ humans: 0, bots: 0 }, { humans: 0, bots: 0 }], desc = t => { const h = T[t].humans, b = T[t].bots, full = h + b >= 5; return `<b>${h}</b> jogador${h === 1 ? '' : 'es'} · <b>${b}</b> bot${b === 1 ? '' : 's'}<br><small>${full ? (b ? 'entra no lugar de um bot' : 'time completo') : 'há vaga'}</small>`; };
+    const can = t => T[t].humans + T[t].bots < 5 || T[t].bots > 0;
+    const m = modal(`<h3>Entrar na sala ${esc(inf.name || id)}</h3><p class="note">${inf.state === 'playing' ? 'A partida já começou: você entra direto no jogo.' : 'Escolha o seu time.'}</p>
+      <div class="teampick"><button class="tp tp0" id="tp0" ${can(0) ? '' : 'disabled'}><span>AZUL</span>${desc(0)}</button><button class="tp tp1" id="tp1" ${can(1) ? '' : 'disabled'}><span>VERMELHO</span>${desc(1)}</button></div>
+      <div class="row"><button class="btn ghost" id="cn">Cancelar</button></div>`);
+    $('#cn', m).onclick = () => m.remove(); $('#tp0', m).onclick = () => { m.remove(); joinRoom(id, pass, 0); }; $('#tp1', m).onclick = () => { m.remove(); joinRoom(id, pass, 1); };
+  }));
+  connect(() => app.socket.emit('room:join', { id, pass, team }, r => {
     if (r && r.ok) { app.room = r.id; if (app.screen !== 'game') lobbyScreen(); return; }
-    if (r && r.needPass) { const m = modal(`<h3>Sala privada</h3><p class="note">Digite a senha da sala ${esc(id)}.</p><input id="pw" type="password" maxlength="24" autocomplete="off">${pass != null ? '<p class="err">Senha incorreta.</p>' : ''}<div class="row"><button class="btn ghost" id="cn">Cancelar</button><button class="btn red" id="ok">Entrar</button></div>`); const i = $('#pw', m); i.focus(); const go = () => { m.remove(); joinRoom(id, i.value); }; $('#ok', m).onclick = go; i.onkeydown = e => { if (e.key === 'Enter') go(); }; $('#cn', m).onclick = () => m.remove(); return; }
-    toast((r && r.error) || 'Não foi possível entrar.', true);
+    if (r && r.needPass) { const m = modal(`<h3>Sala privada</h3><p class="note">Digite a senha da sala ${esc(id)}.</p><input id="pw" type="password" maxlength="24" autocomplete="off">${pass != null ? '<p class="err">Senha incorreta.</p>' : ''}<div class="row"><button class="btn ghost" id="cn">Cancelar</button><button class="btn red" id="ok">Entrar</button></div>`); const i = $('#pw', m); i.focus(); const go = () => { m.remove(); joinRoom(id, i.value, team); }; $('#ok', m).onclick = go; i.onkeydown = e => { if (e.key === 'Enter') go(); }; $('#cn', m).onclick = () => m.remove(); return; }
+    toast((r && r.error) || 'Não foi possível entrar.', true); if (r && r.teamFull) joinRoom(id, pass);
   }));
 }
 function lobbyScreen() { app.screen = 'lobby'; leaveOnlineList(); show(`<div class="panel wide" id="lob"><p class="note">Carregando sala…</p></div>`, 'm-panel'); renderLobby(); }
@@ -411,4 +443,5 @@ function boot() {
 }
 app.debug = { P, startOffline, menu, settingsScreen, openEditor, pauseScreen, cfg, stats, get layout() { return app.layout; } };
 boot();
+
 })();

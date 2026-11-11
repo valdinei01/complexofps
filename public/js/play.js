@@ -16,7 +16,7 @@ P.ensureWorld = function () {
 };
 function makeRadar(map) { const cv = document.createElement('canvas'); cv.width = GX; cv.height = GZ; const g = cv.getContext('2d'), img = g.createImageData(GX, GZ);
   for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) { const c = j * GX + i, k = map.K[c], h = map.H[c]; let col;
-    if (k === S.K_ROOF || (k === S.K_BLOCK && map.M[c] === S.B_MODEL)) { const t = clamp(h / 22, 0, 1); col = [70 + t * 60, 60 + t * 50, 52 + t * 40]; } else if (k === S.K_MATA || k === S.K_TRAIL) col = k === S.K_TRAIL ? [150, 110, 70] : [55, 95, 50]; else if (k === S.K_ESC) col = [255, 210, 74]; else if (k === S.K_AVE) col = [120, 122, 128]; else if (S.WALKABLE[k]) col = [205, 196, 178]; else if (k === S.K_VOID) col = h < 1 && ((i + 0.5) * CELL) > 75 ? [70, 110, 150] : [60, 90, 60]; else col = [40, 36, 32];
+    if (k === S.K_ROOF) { const t = clamp(h / 22, 0, 1); col = [70 + t * 60, 60 + t * 50, 52 + t * 40]; } else if (k === S.K_MATA || k === S.K_TRAIL) col = k === S.K_TRAIL ? [150, 110, 70] : [55, 95, 50]; else if (k === S.K_ESC) col = [255, 210, 74]; else if (k === S.K_AVE) col = [120, 122, 128]; else if (S.WALKABLE[k]) col = [205, 196, 178]; else if (k === S.K_VOID) col = h < 1 && ((i + 0.5) * CELL) > 75 ? [70, 110, 150] : [60, 90, 60]; else col = [40, 36, 32];
     const o = (j * GX + i) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 235; }
   g.putImageData(img, 0, 0); return cv; }
 
@@ -29,7 +29,6 @@ P.initRenderer = function (canvas) {
   const decalGeo = new RND.Geo(true); for (const d of Wg.decals) { const l = Wg.lit([1, 1, 1], d.n[0], d.n[1], d.n[2], 1, 1).map(v => Math.min(1.05, v * 1.05)); decalGeo.quad(d.p, d.uv, 0, [l, l, l, l]); }
   R.upload(Wg.geo, decalGeo, Wg.lines, RND.makeAtlas(), RND.makeDecals('"Bungee","Arial Black",Impact,sans-serif'));
   P.R = R; P.Wg = Wg;
-  if (window.EscModels) { const src = {}; for (const n of window.EscModels.list) src[n] = window.ESC_MODELS && window.ESC_MODELS[n] ? window.ESC_MODELS[n] : { bin: '/models/' + n + '.bin?v=251', jpg: '/models/' + n + '.jpg?v=251' }; try { P.models = window.EscModels.create(R, src, map); } catch (e) { console.warn('construções 3D indisponíveis:', e); } }
   return R;
 };
 // hora do dia => luz do cenário (no menu: fim de tarde)
@@ -72,6 +71,7 @@ function onSnap(s, d) {
     v.alive = !!alive; v.spd = spd; v.deathT = dt; v.buf.push({ t: now, x, y, z, yaw, pitch: 0 }); if (v.buf.length > 8) v.buf.shift(); }
   if (d.c && s.cars) d.c.forEach((c, i) => { const car = s.cars[i]; if (!car) return; car.ts = c[0]; car.spd = c[1]; });
   if (d.gr) s.grenades = d.gr.map(g => ({ id: g[0], x: g[1], y: g[2], z: g[3] }));
+  if (d.pol) s.pol = { phase: d.pol.ph, team: d.pol.tm, left: d.pol.left, cars: d.pol.c.map(c => ({ x: c[0], z: c[1], fx: c[2], fz: c[3], parked: !!c[4] })) };
   if (d.dn != null) s.dayT = d.dn;
   if (d.bl) s.baile = { on: !!d.bl[0], t0: d.bl[1] }; s.serverT = d.t; s.serverAt = performance.now();
   d.b.forEach((b, i) => { const v = s.basesView[i]; v.owner = b[0]; v.prog = b[1]; v.state = b[2]; v.inside = [b[3], b[4]]; });
@@ -99,7 +99,7 @@ function sendInput(s, now) {
 // ---------------- eventos (sons, traçantes, avisos) ----------------
 function actorById(s, id) { if (s.mode === 'offline') return s.G.byId(id); if (id === s.myId) return s.me; return s.actors.get(id) || s.npcs.get(id); }
 const nameOf = (s, id) => { const a = actorById(s, id); return a ? a.name : '?'; };
-const teamCss = t => t === 0 ? '#6FB0FF' : t === 1 ? '#FF7A66' : '#ddd';
+const teamCss = t => t === 0 ? '#6FB0FF' : t === 1 ? '#FF7A66' : t === 2 ? '#A9C0E0' : '#ddd';
 function alert(s, text, col, big, dur) { s.alerts.unshift({ text, col, big, t: dur || 2.6 }); if (s.alerts.length > 3) s.alerts.pop(); }
 function handleEvent(s, e) {
   const me = s.me, A = P.audio, Wd = P.world.W;
@@ -123,13 +123,22 @@ function handleEvent(s, e) {
         const px = ax + bx * t, py = ay + by * t, pz = az + bz * t, dd = Math.hypot(head[0] - px, head[1] - py, head[2] - pz); if (dd < 2.2 && t > 0.02 && t < 0.98) setTimeout(() => A.whizz(px, py, pz), Math.min(400, Math.sqrt(L2) * t / 420 * 1000)); }
       break; }
     case 'hit': if (e.by === s.myId) { s.hitT = 0.18; s.hitHead = e.head; if (A) A.blip(e.head ? 1700 : 1150, 0.05, 'square', 0.06); } if (e.v === s.myId) { const b = actorById(s, e.by); if (A) A.thud(); if (b) s.dmgDirs.push({ ang: Math.atan2(b.x - me.x, b.z - me.z), t: 1 }); } break;
-    case 'kill': { const k = actorById(s, e.by), v = actorById(s, e.v); s.feed.unshift({ k: k ? k.name : '?', v: v ? v.name : '?', kc: teamCss(k && k.team), vc: teamCss(v && v.team), head: e.head, t: 6 }); if (s.feed.length > 5) s.feed.pop();
+    case 'kill': { const k = e.cause === 'car' ? { name: 'Atropelado', team: -1 } : actorById(s, e.by), v = actorById(s, e.v);
+      if (e.by === s.myId && e.v !== s.myId) { const now2 = performance.now(); s.streak = s.killIcon && now2 - s.killIcon.at < 4500 ? s.streak + 1 : 1; s.killIcon = { at: now2, head: !!e.head, n: s.streak }; }
+      s.feed.unshift({ k: k ? k.name : '?', v: v ? v.name : '?', kc: teamCss(k && k.team), vc: teamCss(v && v.team), head: e.head, t: 6 }); if (s.feed.length > 5) s.feed.pop();
       if (e.by === s.myId && A) { A.blip(880, 0.09, 'triangle', 0.14); setTimeout(() => A.blip(1320, 0.12, 'triangle', 0.12), 70); } if (e.v === s.myId) { s.deathText = e.by === s.myId ? 'Você caiu' : 'Derrubado por ' + (k ? k.name : '?'); s.killer = e.by; } break; }
     case 'base': { const b = (s.mode === 'offline' ? s.G.bases : s.basesView).find(q => q.id === e.base); const nm = 'Base ' + e.base;
       if (e.team === s.team) { alert(s, nm + ' capturada', '#7BE07B', true); if (A) A.blip(990, 0.18, 'triangle', 0.12); }
+      else if (e.team === 2) { alert(s, nm + ' ocupada pela POLÍCIA', '#A9C0E0', true); if (A) A.blip(250, 0.2, 'sawtooth', 0.08); }
       else if (e.team >= 0) { alert(s, nm + ' dominada pelo time ' + TEAM[e.team].name, teamCss(e.team), true); if (A) A.blip(330, 0.18, 'triangle', 0.12); }
       else if (e.from === s.team) alert(s, nm + ' perdida', '#FF8A6A', true); else alert(s, nm + ' neutralizada', '#ddd'); break; }
     case 'contest': alert(s, 'Base ' + e.base + ' contestada', '#FFD24A'); break;
+    case 'runover': if (e.v === s.myId) s.deathText = 'Você foi atropelado'; break;
+    case 'police': { const fav = 'favela do ' + (TEAM[e.team] ? TEAM[e.team].name : '?'), mine = e.team === s.team;
+      if (e.phase === 'start') { alert(s, 'OPERAÇÃO POLICIAL NA ' + fav.toUpperCase() + '!' + (e.n ? ' (' + e.n + ' policiais)' : ''), '#A9C0E0', true, 5); if (mine) alert(s, 'As viaturas estão vindo para a SUA favela — defenda as bases!', '#FFB45A', false, 5); if (A) A.siren(true); }
+      else if (e.phase === 'incursao') alert(s, 'Polícia desembarcou: incursão na ' + fav, '#A9C0E0', true, 4);
+      else if (e.phase === 'end') { alert(s, e.result === 'derrotada' ? 'A polícia recuou: operação derrotada' : 'A polícia foi embora: fim da operação', '#7BE07B', true, 4); if (A) A.siren(false); }
+      break; }
     case 'npc': alert(s, 'PENALIDADE: NPC CIVIL ELIMINADO — -' + CONFIG.npcPenalty + '%', teamCss(e.team), true, 3.5); if (A) A.blip(220, 0.3, 'sawtooth', 0.08); break;
     case 'refill': if (e.id === s.myId) { alert(s, 'MUNIÇÃO REABASTECIDA', '#FFD24A', true); if (A) A.blip(760, 0.12, 'triangle', 0.12); } break;
     case 'empty': if (e.id === s.myId) alert(s, 'SEM MUNIÇÃO — RETORNE À BASE', '#FF8A6A', true, 3); break;
@@ -165,6 +174,7 @@ P.frame = function (dt, view) {
       Wd.dyn.length = 0; const AL = s.helper.aveLen; s.dayT = (s.dayT + dt / CONFIG.dayLength) % 1;
       for (const c of s.cars) { c.s += c.dir * c.spd * dt; let dd = c.ts - c.s; if (dd > AL / 2) dd -= AL; if (dd < -AL / 2) dd += AL; if (Math.abs(dd) > 25) c.s = c.ts; else c.s += dd * Math.min(1, dt * 3); if (c.s < 0) c.s += AL; if (c.s > AL) c.s -= AL;
         s.helper.carPose(c); Wd.dyn.push({ x: c.x, z: c.z, fx: c.fx, fz: c.fz, hl: 2.3, hw: 1.0, top: c.van ? 2 : 1.5 }); }
+      for (const c of (s.pol ? s.pol.cars : [])) Wd.dyn.push({ x: c.x, z: c.z, fx: c.fx, fz: c.fz, hl: 2.4, hw: 1.05, top: 1.7 });
       // previsão local do próprio movimento (o servidor valida e corrige)
       me.yaw -= I.dx; me.pitch = clamp(me.pitch - I.dy, -1.45, 1.45); I.dx = I.dy = 0;
       if (me.alive && me.placed) { me.crouch = I.crouch; const sprint = I.sprint && !I.aim && !me.crouch && I.mz > 0.3, speed = me.crouch ? 2.2 : I.aim ? 2.8 : sprint ? 6.1 : 4.6;
@@ -223,12 +233,12 @@ function camera(s, dt) {
   const k = s.killer != null ? actorById(s, s.killer) : null, t = Math.min(1, (me.deathT || 0) / 1.5), ey = me.y + 1.6 + t * 2.5; let yaw = me.yaw, pitch = -0.3 * t;
   if (k && k !== me) { const dx = k.x - me.x, dz = k.z - me.z; yaw = Math.atan2(dx, dz); pitch = Math.atan2(k.y + 1.3 - ey, Math.hypot(dx, dz)); } return { eye: [me.x, ey, me.z], yaw, pitch };
 }
-P.menuCamera = function (t) { const a = t * 0.05; return { eye: [54 + Math.sin(a) * 1.2, 3.6 + Math.sin(t * 0.07) * 0.2, 28 + Math.sin(a * 0.6) * 1.0], yaw: Math.sin(a * 0.9) * 0.08, pitch: 0.2 }; };
+P.menuCamera = function (t) { const a = t * 0.05; return { eye: [67.5 + Math.sin(a) * 1.2, 3.6 + Math.sin(t * 0.07) * 0.2, 35 + Math.sin(a * 0.6) * 1.0], yaw: Math.sin(a * 0.9) * 0.08, pitch: 0.2 }; };
 P.renderScene = function (cam, aspect, extra) {
   const R = P.R, Q = P.quality(); const fov = (cam.fov || 74) * Math.PI / 180, vfov = aspect < 1 ? 2 * Math.atan(Math.tan(fov / 2) / Math.max(aspect, 0.56) * 0.9) : fov;
   const proj = m4.persp(vfov, aspect, 0.06, 900), f = [Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch)];
   const view = m4.look(cam.eye, [cam.eye[0] + f[0], cam.eye[1] + f[1], cam.eye[2] + f[2]], [0, 1, 0]), VP = m4.mul(proj, view);
-  R.begin(VP, cam.eye, Q.fog); R.sky(); R.world(); if (P.models) P.models.draw((P.cfg && P.cfg.quality) || 'medio'); if (extra) extra(VP, view); return { VP, view };
+  R.begin(VP, cam.eye, Q.fog); R.sky(); R.world(); if (extra) extra(VP, view); return { VP, view };
 };
 function render(s, dt, view) {
   const R = P.R, me = s.me, cam = camera(s, dt), aspect = R.canvas.width / R.canvas.height;
@@ -241,6 +251,9 @@ function render(s, dt, view) {
     R.solidBegin();
     for (const a of others) { if (!a.alive && (a.deathT || 0) > 3.6) continue; if (Math.hypot(a.x - cam.eye[0], a.z - cam.eye[2]) > 170) continue; drawActor(R, a); }
     for (const c of (s.mode === 'offline' ? s.G.cars : s.cars)) if (Math.hypot(c.x - cam.eye[0], c.z - cam.eye[2]) < 200) drawCar(R, c);
+    const pcars = s.mode === 'offline' ? s.G.police.cars.filter(c => c.s >= 0) : (s.pol ? s.pol.cars : []); for (const c of pcars) if (Math.hypot(c.x - cam.eye[0], c.z - cam.eye[2]) < 220) drawPoliceCar(R, c);
+    { const ph = s.mode === 'offline' ? s.G.police.phase : s.pol ? s.pol.phase : 'idle'; if (s.sirenPh !== ph && P.audio && P.audio.siren) { s.sirenPh = ph; P.audio.siren(ph !== 'idle'); } }
+    if (P.audio && P.audio.sirenAt) P.audio.sirenAt(pcars.map(c => ({ x: c.x, z: c.z })), cam.eye);
     for (const g of (s.mode === 'offline' ? s.G.grenades : s.grenades || [])) R.cube(m4.mul(m4.tr(g.x, g.y, g.z), m4.sc(0.14, 0.18, 0.14)), [0.22, 0.3, 0.18], 0);
     const right = [viewM[0], viewM[4], viewM[8]], up = [viewM[1], viewM[5], viewM[9]], v = [];
     // anéis e bandeiras das bases (cinza neutra, azul, vermelha)
@@ -269,6 +282,14 @@ function render(s, dt, view) {
   s.stepT -= dt; if (s.stepT <= 0 && P.audio) { s.stepT = 0.34; for (const a of others) { if (!a.alive || a.npc || (a.spd || 0) < 3) continue; if (Math.hypot(a.x - me.x, a.z - me.z) < 16) P.audio.step(a.x, a.y, a.z); } }
   drawHud(s, view, bases, others);
 }
+// viatura: branca com portas pretas, giroflex vermelho/azul piscando
+function drawPoliceCar(R, c) {
+  const X = m4.mul, T = m4.tr, B = X(T(c.x, 0, c.z), m4.ry(Math.atan2(c.fx, c.fz))), W = [0.92, 0.93, 0.95], K = [0.08, 0.08, 0.1], t = performance.now() / 1000, on = Math.floor(t * 6) % 2;
+  R.cube(X(X(B, T(0, 0.66, 0)), m4.sc(1.9, 0.64, 4.5)), W, 0); R.cube(X(X(B, T(0, 0.62, 0.15)), m4.sc(1.92, 0.5, 1.6)), K, 0); R.cube(X(X(B, T(0, 1.2, -0.15)), m4.sc(1.66, 0.5, 2.2)), [0.25, 0.3, 0.38], 0); R.cube(X(X(B, T(0, 1.47, -0.15)), m4.sc(1.68, 0.05, 2.1)), W, 0);
+  R.cube(X(X(B, T(-0.38, 1.56, -0.1)), m4.sc(0.6, 0.14, 0.3)), on ? [2.2, 0.2, 0.15] : [0.5, 0.08, 0.06], 0, on); R.cube(X(X(B, T(0.38, 1.56, -0.1)), m4.sc(0.6, 0.14, 0.3)), on ? [0.25, 0.35, 0.6] : [0.2, 0.45, 2.4], 0, 1 - on);
+  for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) R.cube(X(X(B, T(a * 0.92, 0.33, b * 1.4)), m4.sc(0.24, 0.66, 0.66)), K, 0);
+  R.cube(X(X(B, T(0, 0.55, 2.26)), m4.sc(1.6, 0.25, 0.03)), [0.1, 0.1, 0.12], 0); R.cube(X(X(B, T(-0.62, 0.75, 2.26)), m4.sc(0.3, 0.14, 0.02)), [1.6, 1.5, 1.2], 0, 1); R.cube(X(X(B, T(0.62, 0.75, 2.26)), m4.sc(0.3, 0.14, 0.02)), [1.6, 1.5, 1.2], 0, 1);
+}
 function drawCar(R, c) {
   const X = m4.mul, T = m4.tr, B = X(T(c.x, 0, c.z), m4.ry(Math.atan2(c.fx, c.fz))), col = c.col, Pc = M => R.cube(M, col, 0), dark = [0.12, 0.12, 0.13];
   if (c.van) { R.cube(X(X(B, T(0, 1.1, 0)), m4.sc(1.9, 1.6, 4.4)), col, 0); R.cube(X(X(B, T(0, 1.45, 2.21)), m4.sc(1.7, 0.6, 0.02)), [0.25, 0.32, 0.4], 0); }
@@ -279,13 +300,13 @@ function drawCar(R, c) {
 }
 function drawActor(R, a) {
   const X = m4.mul, T = m4.tr, base = X(T(a.x, a.y, a.z), m4.ry(a.yaw)), flash = (a.hurtT || 0) > 0 ? 0.6 : 0;
-  const tc = a.npc ? a.shirt : TEAM[a.team].col, td = a.npc ? [0.3, 0.25, 0.2] : TEAM[a.team].dark;
+  const tc = a.npc ? a.shirt : (TEAM[a.team] || TEAM[0]).col, td = a.npc ? [0.3, 0.25, 0.2] : (TEAM[a.team] || TEAM[0]).dark;
   let B = base; if (!a.alive) { const k = Math.min(1, (a.deathT || 0) / 0.45); B = X(base, m4.rx(k * 1.52)); }
   const cr = a.crouch ? 0.6 : 1, hip = 0.85 * cr, sw = a.alive ? Math.sin((a.anim || 0) * 2.4) * Math.min(0.7, (a.spd || 0) * 0.14) : 0, Pd = (M, col) => R.cube(M, col, flash);
   const pants = a.npc ? [0.3, 0.32, 0.45] : [0.2, 0.22, 0.26];
   for (const s of [-1, 1]) { const L = X(X(B, T(s * 0.11, hip, 0)), m4.rx(sw * s)); Pd(X(X(L, T(0, -hip / 2, 0)), m4.sc(0.17, hip, 0.2)), pants); Pd(X(X(L, T(0, -hip + 0.05, 0.04)), m4.sc(0.18, 0.1, 0.28)), [0.1, 0.1, 0.1]); }
   const ty = hip + 0.31; Pd(X(X(B, T(0, ty, 0)), m4.sc(0.46, 0.62, 0.27)), tc);
-  if (!a.npc) { Pd(X(X(B, T(0, ty + 0.06, 0)), m4.sc(0.48, 0.34, 0.3)), [0.22, 0.24, 0.2]); Pd(X(X(B, T(0, ty + 0.18, 0)), m4.sc(0.5, 0.06, 0.31)), tc); }
+  if (!a.npc) { Pd(X(X(B, T(0, ty + 0.06, 0)), m4.sc(0.48, 0.34, 0.3)), a.team === 2 ? [0.06, 0.06, 0.07] : [0.22, 0.24, 0.2]); Pd(X(X(B, T(0, ty + 0.18, 0)), m4.sc(0.5, 0.06, 0.31)), a.team === 2 ? [0.85, 0.85, 0.8] : tc); }
   const hy = hip + 0.76; Pd(X(X(B, T(0, hy, 0)), m4.sc(0.23, 0.26, 0.25)), a.skin || [0.75, 0.55, 0.4]);
   if (!a.npc) { Pd(X(X(B, T(0, hy + 0.13, -0.01)), m4.sc(0.25, 0.07, 0.27)), td); Pd(X(X(B, T(0, hy + 0.12, 0.15)), m4.sc(0.22, 0.03, 0.1)), td); }
   if (a.npc) { for (const s of [-1, 1]) Pd(X(X(X(B, T(s * 0.3, hip + 0.35, 0)), m4.rx(-sw * s * 0.8)), m4.sc(0.1, 0.55, 0.1)), tc); return; }
@@ -333,6 +354,9 @@ function drawHud(s, view, bases, others) {
   const dots = []; for (const a of others) { if (!a.alive || a.npc) continue; const ally = a.team === me.team; if (!ally && !(s.mode === 'offline' && s.G.t - a.spotT < 1.6)) continue; dots.push({ x: a.x, z: a.z, col: ally ? TEAM[a.team].css : '#FF3B2F' }); }
   for (const b of bases) dots.push({ kind: 'base', x: b.x, z: b.z, col: HUD.BASE_COL(b.owner), label: b.id }); dots.push({ kind: 'supply', x: st0.x, z: st0.z, col: '#FFD24A' });
   me.sector = me.alive ? sectorAt(s, me.x, me.z) : '';
+  const PZ = s.mode === 'offline' ? { phase: s.G.police.phase, team: s.G.police.team, left: Math.max(0, Math.round(s.G.police.endT - s.G.t)) } : s.pol;
+  if (PZ && PZ.phase !== 'idle') HUD.policeBar(g, W, H, L, A, op, { phase: PZ.phase, team: PZ.team, left: PZ.left, mine: PZ.team === me.team });
+  if (s.killIcon) { const age = (performance.now() - s.killIcon.at) / 1000; if (age < 1.6) HUD.killIcon(g, W, H, s.killIcon, age); }
   HUD.radar(g, W, H, L, P.world.radar, me, dots, CELL, A, op);
   if (view.board) drawBoard(g, s, W, H);
   if (view.showFps) { g.textAlign = 'left'; g.font = '600 11px monospace'; g.fillStyle = '#fff'; g.fillText(Math.round(view.fps) + ' fps · ' + (P.R.stats ? P.R.stats.drawn : 0) + ' blocos', 10, H - 10); }
@@ -346,4 +370,7 @@ function drawBoard(g, s, W, H) {
 let sectorFn = null;
 function sectorAt(s, x, z) { if (s.mode === 'offline') return s.G.sectorAt(x, z); if (!sectorFn) sectorFn = S.makeGame(P.world.map, P.world.W, { humans: [], bots: { 0: 0, 1: 0 }, local: true }).sectorAt; return sectorFn(x, z); }
 P.handleEvent = handleEvent; P.aimAssist = aimAssist;
+// lista de personagens atualizada pelo servidor (alguém entrou no lugar de um bot, ou saiu e o bot voltou)
+P.setRoster = function (s, list) { if (!Array.isArray(list)) return; s.roster = new Map(list.map(r => [r.id, r])); for (const r of list) { const v = s.actors.get(r.id); if (v) { v.name = r.name; v.team = r.team; } } };
+P.notice = function (s, text) { alert(s, text, '#FFE7A8', false, 3.5); };
 })();

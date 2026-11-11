@@ -47,7 +47,7 @@ function reset(touch, portrait) { try { localStorage.removeItem(keyFor(touch, po
 // tamanhos base (px) de cada elemento — usados pelo HUD, pelos botões e pelo editor
 const SIZES = { score: [252, 34], radar: [92, 92], feed: [210, 60], alerts: [280, 34], health: [120, 22], ammo: [118, 30], joy: [128, 128], fire: [92, 92], gren: [52, 52], aim: [54, 54], reload: [54, 54], crouch: [54, 54], sprint: [54, 54], jump: [50, 50], swap: [46, 46], use: [58, 58], sound: [36, 36], mic: [36, 36], pause: [38, 38] };
 const roundRect = (g, x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
-const BASE_COL = o => o === 0 ? '#3D8BFF' : o === 1 ? '#FF4A3A' : '#8E8E8E';
+const BASE_COL = o => o === 0 ? '#3D8BFF' : o === 1 ? '#FF4A3A' : o === 2 ? '#A9C0E0' : '#8E8E8E';
 // área útil: a tela menos as margens de segurança (entalhe, barra de gestos)
 function area(W, H, ins) { ins = ins || { t: 0, r: 0, b: 0, l: 0 }; return { x: ins.l, y: ins.t, w: W - ins.l - ins.r, h: H - ins.t - ins.b }; }
 // posição final em px de um elemento, sempre dentro da área útil
@@ -72,7 +72,7 @@ function draw(g, W, H, L, st, A, op) {
     g.font = '700 14px Rubik, system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = '#fff'; g.fillText('AZUL ' + Math.floor(st.score[0]) + '%', -w / 4 - 16, 0.5); g.fillText('VERM. ' + Math.floor(st.score[1]) + '%', w / 4 + 16, 0.5);
     st.bases.forEach((b, i) => { const bx = -27 + i * 27; g.fillStyle = `rgba(10,10,12,${Math.min(1, bgTop + 0.15)})`; g.beginPath(); g.arc(bx, 0, 12, 0, 7); g.fill();
       g.strokeStyle = BASE_COL(b.owner); g.lineWidth = 2.2; g.beginPath(); g.arc(bx, 0, 11, 0, 7); g.stroke();
-      if (b.state === 'capturando' || b.state === 'contestada') { g.strokeStyle = b.state === 'contestada' ? '#FFD24A' : b.prog < 0 ? '#3D8BFF' : '#FF4A3A'; g.lineWidth = 2.6; g.beginPath(); g.arc(bx, 0, 14, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.abs(b.prog)); g.stroke(); }
+      if (b.state === 'capturando' || b.state === 'contestada') { g.strokeStyle = b.state === 'contestada' ? '#FFD24A' : b.capTeam === 2 ? '#A9C0E0' : b.prog < 0 ? '#3D8BFF' : '#FF4A3A'; g.lineWidth = 2.6; g.beginPath(); g.arc(bx, 0, 14, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.abs(b.prog)); g.stroke(); }
       g.font = '700 13px Rubik, system-ui, sans-serif'; g.fillStyle = '#fff'; g.fillText(b.id, bx, 0.5); });
     g.restore(); }
   // avisos
@@ -124,5 +124,24 @@ function radar(g, W, H, L, img, me, dots, cell, A, op) {
   if (me.sector) { g.font = '600 10px Rubik, system-ui, sans-serif'; g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(me.sector, x + 1, y + r + 12); g.fillStyle = '#F4E6C8'; g.fillText(me.sector, x, y + r + 11); }
   g.restore();
 }
-window.EscHUD = { defaults, load, save, reset, draw, radar, clampV, BASE_COL, SIZES, place, area, keyFor };
+// faixa da operação policial (abaixo do placar)
+function policeBar(g, W, H, L, A, op, P2) { const p = place(L, 'score', A), y = p.cy + 30 * p.s, txt = (P2.phase === 'chegando' ? 'VIATURAS A CAMINHO' : 'OPERAÇÃO POLICIAL') + ' — favela do ' + (P2.team === 0 ? 'Azul' : 'Vermelho') + (P2.phase === 'incursao' ? '  ' + Math.floor(P2.left / 60) + ':' + String(P2.left % 60).padStart(2, '0') : '');
+  g.save(); g.font = '700 11.5px Rubik, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; const w = g.measureText(txt).width + 34, on = Math.floor(performance.now() / 350) % 2;
+  g.fillStyle = `rgba(12,16,26,${(op ? op.top : 0.65) + 0.15})`; roundRect(g, p.cx - w / 2, y - 11, w, 22, 6); g.fill(); g.fillStyle = on ? '#FF3B30' : '#3D7BFF'; g.beginPath(); g.arc(p.cx - w / 2 + 11, y, 4, 0, 7); g.fill(); g.fillStyle = on ? '#3D7BFF' : '#FF3B30'; g.beginPath(); g.arc(p.cx + w / 2 - 11, y, 4, 0, 7); g.fill();
+  g.fillStyle = P2.mine ? '#FFB45A' : '#C9D6EA'; g.fillText(txt, p.cx, y + 0.5); g.restore(); }
+// caveirinha de abate (estilo CrossFire). Tiro na cabeça: caveira com o furo da bala e alvo vermelho em volta
+function killIcon(g, W, H, k, age) {
+  const pop = age < 0.12 ? 0.6 + age / 0.12 * 0.65 : age < 0.25 ? 1.25 - (age - 0.12) / 0.13 * 0.25 : 1, fade = age > 1.2 ? 1 - (age - 1.2) / 0.4 : 1, s = Math.min(W, H) / 420 * pop, x = W / 2, y = H * 0.66;
+  g.save(); g.globalAlpha = Math.max(0, fade); g.translate(x, y); g.scale(s, s);
+  if (k.head) { g.strokeStyle = '#E8342A'; g.lineWidth = 3; g.beginPath(); g.arc(0, -2, 34, 0, 7); g.stroke(); for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) { g.beginPath(); g.moveTo(Math.cos(a) * 28, -2 + Math.sin(a) * 28); g.lineTo(Math.cos(a) * 42, -2 + Math.sin(a) * 42); g.stroke(); } }
+  const skull = col => { g.fillStyle = col; g.beginPath(); g.moveTo(-18, 4); g.bezierCurveTo(-22, -26, 22, -26, 18, 4); g.lineTo(13, 8); g.lineTo(12, 16); g.lineTo(-12, 16); g.lineTo(-13, 8); g.closePath(); g.fill();
+    g.fillRect(-10, 16, 20, 7); };
+  g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 6; skull(k.head ? '#FFF3E0' : '#F2F2F2'); g.shadowBlur = 0;
+  g.fillStyle = '#1A1A1A'; g.beginPath(); g.ellipse(-7.5, -3, 5.5, 6, 0.1, 0, 7); g.fill(); g.beginPath(); g.ellipse(7.5, -3, 5.5, 6, -0.1, 0, 7); g.fill();
+  g.beginPath(); g.moveTo(0, 3); g.lineTo(-3, 9); g.lineTo(3, 9); g.closePath(); g.fill(); for (let i = -2; i <= 2; i++) g.fillRect(i * 4 - 1, 16, 2, 7);
+  if (k.head) { g.fillStyle = '#1A1A1A'; g.beginPath(); g.arc(4, -15, 3.6, 0, 7); g.fill(); g.strokeStyle = '#1A1A1A'; g.lineWidth = 1.4; g.beginPath(); g.moveTo(6, -18); g.lineTo(11, -21); g.moveTo(1.5, -17); g.lineTo(-2, -22); g.moveTo(7, -13); g.lineTo(12, -11); g.stroke(); }
+  g.font = '800 13px Rubik, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; const lbl = k.head ? 'HEADSHOT' : k.n > 1 ? k.n + ' ABATES' : 'ABATE'; g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,.7)'; g.strokeText(lbl, 0, 44); g.fillStyle = k.head ? '#FF5A4A' : '#FFD24A'; g.fillText(lbl, 0, 44);
+  if (k.n > 1 && k.head) { g.font = '800 11px Rubik, sans-serif'; g.strokeText('×' + k.n, 30, -26); g.fillStyle = '#FFD24A'; g.fillText('×' + k.n, 30, -26); }
+  g.restore(); }
+window.EscHUD = { policeBar, killIcon, defaults, load, save, reset, draw, radar, clampV, BASE_COL, SIZES, place, area, keyFor };
 })();

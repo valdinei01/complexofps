@@ -10,8 +10,9 @@ function makeAtlas() {
   const R = mulberry(4242);
   const glass = []; let off = [0, 0];
   const tile = (t, fn) => { off = [(t % 4) * S, Math.floor(t / 4) * S]; g.save(); g.translate((t % 4) * S, Math.floor(t / 4) * S); g.beginPath(); g.rect(0, 0, S, S); g.clip(); fn(g); g.restore(); };
-  const speck = (n, c, a, sz) => { for (let k = 0; k < n; k++) { g.fillStyle = c; g.globalAlpha = a * R(); const s = sz * (0.4 + R()); g.fillRect(R() * S, R() * S, s, s); } g.globalAlpha = 1; };
-  const grime = (h0) => { const gr = g.createLinearGradient(0, h0, 0, S); gr.addColorStop(0, 'rgba(60,50,40,0)'); gr.addColorStop(1, 'rgba(60,50,40,0.28)'); g.fillStyle = gr; g.fillRect(0, 0, S, S); for (let k = 0; k < 14; k++) { g.fillStyle = 'rgba(70,60,50,' + (0.05 + R() * 0.08) + ')'; const x = R() * S; g.fillRect(x, R() * 40, 2 + R() * 4, 40 + R() * 140); } };
+  const LOWPOLY = 0.3; // intensidade dos detalhes de textura (estilo low poly: cores chapadas)
+  const speck = (n, c, a, sz) => { a *= LOWPOLY; n = Math.ceil(n * 0.5); for (let k = 0; k < n; k++) { g.fillStyle = c; g.globalAlpha = a * R(); const s = sz * (0.4 + R()); g.fillRect(R() * S, R() * S, s, s); } g.globalAlpha = 1; };
+  const grime = (h0) => { const gr = g.createLinearGradient(0, h0, 0, S); gr.addColorStop(0, 'rgba(60,50,40,0)'); gr.addColorStop(1, 'rgba(60,50,40,0.1)'); g.fillStyle = gr; g.fillRect(0, 0, S, S); for (let k = 0; k < 14; k++) { g.fillStyle = 'rgba(70,60,50,' + (0.05 + R() * 0.08) + ')'; const x = R() * S; g.fillRect(x, R() * 40, 2 + R() * 4, 40 + R() * 140); } };
   const plaster = (base) => { g.fillStyle = base; g.fillRect(0, 0, S, S); speck(900, '#000', 0.06, 2); speck(500, '#fff', 0.08, 2); };
   const windowAt = (x, y, w, h, kind) => {
     g.fillStyle = '#3b3a37'; g.fillRect(x - 4, y - 4, w + 8, h + 8);
@@ -152,8 +153,8 @@ function buildGeometry(map) {
   const lit = (tint, nx, ny, nz, sh, ao, glow) => [tint[0], tint[1], tint[2], Math.max(0, nx * SUN[0] + ny * SUN[1] + nz * SUN[2]) * sh, ao, glow || 0];
   const houseTint = h => h.style.brick ? [1, 1, 1] : TINTS[Math.floor(h.style.tint * TINTS.length)];
   // bandeira do Brasil pintada nos degraus dos dois primeiros lances do escadão
-  const flagCol = (x, z) => { const u = (x - 51) / 6, v = (z - 44.5) / 26.5; if (u < 0 || u > 1 || v < 0 || v > 1) return null;
-    const du = (u - 0.5) * 6, dv = (v - 0.5) * 26.5; if (du * du + dv * dv < 6.2) return Math.abs(dv + 0.6 - du * 0.15) < 0.3 ? [1.25, 1.25, 1.2] : [0.32, 0.42, 1.05];
+  const flagCol = (x, z) => { const F0 = ESC.flights[0], F1 = ESC.flights[1], u = (x - F0.x0) / (F0.x1 - F0.x0), v = (z - F0.a0) / (F1.a1 - F0.a0); if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+    const du = (u - 0.5) * (F0.x1 - F0.x0), dv = (v - 0.5) * (F1.a1 - F0.a0); if (du * du + dv * dv < 6.2) return Math.abs(dv + 0.6 - du * 0.15) < 0.3 ? [1.25, 1.25, 1.2] : [0.32, 0.42, 1.05];
     if (Math.abs(u - 0.5) * 2 + Math.abs(v - 0.5) * 2 < 0.92) return [1.3, 1.1, 0.25]; return [0.3, 0.78, 0.38]; };
   // ---- topos ----
   const topInfo = c => {
@@ -338,11 +339,11 @@ function buildDecor(map, W) {
   stripe(AVE_PTS, -0.12, 0.05, [1.2, 0.95, 0.3]); stripe(AVE_PTS, 0.12, 0.05, [1.2, 0.95, 0.3]);
   stripe(AVE_PTS, -S.AVE_HW + 0.3, 0.06, [1.1, 1.1, 1.1]); stripe(AVE_PTS, S.AVE_HW - 0.3, 0.06, [1.1, 1.1, 1.1]);
   stripe(BOTTOM_ROAD, 0, 0.05, [1.2, 0.95, 0.3], true);
-  for (const [cx, cz] of [[S.aveX(11), 11], [S.aveX(48), 48]]) for (let k = -3; k <= 3; k++) { const z0 = cz + k * 1.1; flat([[cx - S.AVE_HW + 0.4, z0], [cx - S.AVE_HW + 0.4, z0 + 0.55], [cx + S.AVE_HW - 0.4, z0 + 0.55], [cx + S.AVE_HW - 0.4, z0]], 0.016, T_PLASTER, [1.15, 1.15, 1.12], 0.2); }
-  for (const zc of [30, 92, 128]) { const ax = S.aveX(zc), x = ax - S.AVE_HW - 1.2; geo.box(x - 0.06, 0.15, zc - 0.06, x + 0.06, 5.1, zc + 0.06, T_ZINC, METAL, 1); geo.box(x, 4.6, zc - 0.03, x + 3.6, 4.7, zc + 0.03, T_ZINC, METAL, 1);
+  for (const [cx, cz] of [[S.aveX(11 * S.SC), 11 * S.SC], [S.aveX(48 * S.SC), 48 * S.SC]]) for (let k = -3; k <= 3; k++) { const z0 = cz + k * 1.1; flat([[cx - S.AVE_HW + 0.4, z0], [cx - S.AVE_HW + 0.4, z0 + 0.55], [cx + S.AVE_HW - 0.4, z0 + 0.55], [cx + S.AVE_HW - 0.4, z0]], 0.016, T_PLASTER, [1.15, 1.15, 1.12], 0.2); }
+  for (const zc of [30 * S.SC, 92 * S.SC, 128 * S.SC]) { const ax = S.aveX(zc), x = ax - S.AVE_HW - 1.2; geo.box(x - 0.06, 0.15, zc - 0.06, x + 0.06, 5.1, zc + 0.06, T_ZINC, METAL, 1); geo.box(x, 4.6, zc - 0.03, x + 3.6, 4.7, zc + 0.03, T_ZINC, METAL, 1);
     decal(x + 2.0, 4.25, zc - 0.05, 0, -1, 3.4, 0.74, 612 / 1024, 852 / 1024, 1020 / 1024, 940 / 1024); decal(x + 2.0, 4.25, zc + 0.05, 0, 1, 3.4, 0.74, 612 / 1024, 852 / 1024, 1020 / 1024, 940 / 1024); }
   // ponto de ônibus na calçada leste
-  { const zc = 70, x = S.aveX(zc) + S.AVE_HW + 1.2; geo.box(x - 0.8, 2.55, zc - 1.8, x + 0.8, 2.65, zc + 1.8, T_ZINC, [0.6, 0.62, 0.65], 1); for (const dz of [-1.6, 1.6]) geo.box(x + 0.6, 0.15, zc + dz - 0.05, x + 0.7, 2.55, zc + dz + 0.05, T_ZINC, METAL, 1); geo.box(x + 0.2, 0.55, zc - 1.2, x + 0.6, 0.62, zc + 1.2, T_ZINC, [0.5, 0.35, 0.25], 1); }
+  { const zc = 70 * S.SC, x = S.aveX(zc) + S.AVE_HW + 1.2; geo.box(x - 0.8, 2.55, zc - 1.8, x + 0.8, 2.65, zc + 1.8, T_ZINC, [0.6, 0.62, 0.65], 1); for (const dz of [-1.6, 1.6]) geo.box(x + 0.6, 0.15, zc + dz - 0.05, x + 0.7, 2.55, zc + dz + 0.05, T_ZINC, METAL, 1); geo.box(x + 0.2, 0.55, zc - 1.2, x + 0.6, 0.62, zc + 1.2, T_ZINC, [0.5, 0.35, 0.25], 1); }
   // ---- canal: água, vegetação nas margens e pontes com guarda-corpo ----
   for (let q = 0; q < CANAL_PTS.length - 1; q++) { const a = CANAL_PTS[q], b = CANAL_PTS[q + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]), nx = (b[1] - a[1]) / len, nz = -(b[0] - a[0]) / len, w = S.CAN_HW + 0.1;
     const c = [0.55, 0.62, 0.56, 0.5, 1, 0]; geo.quad([[a[0] - nx * w, -0.95, a[1] - nz * w], [b[0] - nx * w, -0.95, b[1] - nz * w], [b[0] + nx * w, -0.95, b[1] + nz * w], [a[0] + nx * w, -0.95, a[1] + nz * w]], [[0, 0], [0, len / 3], [2, len / 3], [2, 0]], T_WATER, [c, c, c, c]);
@@ -358,9 +359,9 @@ function buildDecor(map, W) {
       geo.box(p0[0] - 0.035, y0, p0[1] - 0.035, p0[0] + 0.035, y0 + 0.95, p0[1] + 0.035, T_ZINC, YEL, 1); L([p0[0], y0 + 0.95, p0[1]], [p1[0], y1 + 0.95, p1[1]], YEL, false); L([p0[0], y0 + 0.5, p0[1]], [p1[0], y1 + 0.5, p1[1]], YEL, false); } }
   for (const l of S.ESC_LAND) for (const [dx, dz] of [[-1, -1], [1, 1]]) { const x = l.x + dx * (l.hx - 0.3), z = l.z + dz * (l.hz - 0.3); if (!S.escAt(x, z)) continue; geo.box(x - 0.08, l.h, z - 0.08, x + 0.08, l.h + 3.6, z + 0.08, T_ZINC, METAL, 1); geo.box(x - 0.3, l.h + 3.5, z - 0.3, x + 0.3, l.h + 3.7, z + 0.3, T_PLASTER, BULB, 1); }
   // grafite COMPLEXO DO ESCADÃO na parede ao norte do 2º patamar e na lateral do 1º lance
-  { const yb = S.ESC_LAND[2].h + 0.6; decal(51, yb + 1.3, 76.47, 0, -1, 8.6, 2.5, 0, 0, 1, 300 / 1024); }
-  { const xa = 57.03; for (const zc of [50.5, 65]) decal(xa, (S.escAt(54, zc) || { h: 3 }).h + 1.9, zc, 1, 0, 7, 2.05, 0, 0, 1, 300 / 1024); }
-  { const l = S.ESC_LAND[1]; decal(50 - 0.03, l.h + 1.5, 59, -1, 0, 2.4, 1.65, 0, 848 / 1024, 0.25, 1); }
+  { const yb = S.ESC_LAND[2].h + 0.6; const L2 = ESC.lands[2]; decal(L2.x0 + 7, yb + 1.3, L2.z1 - 0.03, 0, -1, 8.6, 2.5, 0, 0, 1, 300 / 1024); }
+  { const F0 = ESC.flights[0], xa = F0.x1 + 0.03, xm = (F0.x0 + F0.x1) / 2; for (const zc of [F0.a0 + 6, ESC.flights[1].a0 + 4]) decal(xa, (S.escAt(xm, zc) || { h: 3 }).h + 1.9, zc, 1, 0, 7, 2.05, 0, 0, 1, 300 / 1024); }
+  { const l = S.ESC_LAND[1], L1 = ESC.lands[1]; decal(L1.x0 - 0.03, l.h + 1.5, l.z, -1, 0, 2.4, 1.65, 0, 848 / 1024, 0.25, 1); }
   // ---- Praça Central: canteiros com árvores, banco, quiosque ----
   { const [cx, cz] = CLEAR.praca.c; for (const [tx, tz] of [[cx - 9, cz + 5], [cx + 9, cz + 5], [cx - 9, cz - 5], [cx + 8, cz - 6]]) { const y = hAt(tx, tz); geo.box(tx - 0.9, y, tz - 0.9, tx + 0.9, y + 0.45, tz + 0.9, T_CONC, [0.7, 0.68, 0.64], 1); geo.box(tx - 0.12, y + 0.45, tz - 0.12, tx + 0.12, y + 2.8, tz + 0.12, T_EARTH, [0.45, 0.35, 0.25], 1); for (let k = 0; k < 3; k++) geo.box(tx - 1.4 + k * 0.3, y + 2.4 + k * 0.45, tz - 1.3 + k * 0.2, tx + 1.3 - k * 0.2, y + 3.4 + k * 0.5, tz + 1.4 - k * 0.3, T_EARTH, [0.42, 0.72, 0.36], 2); }
     const ky = hAt(cx + 4, cz + 7); geo.box(cx + 2.5, ky, cz + 6, cx + 5.5, ky + 2.3, cz + 8.4, T_SHOP, [0.6, 0.75, 0.95], 3, 61); geo.box(cx + 2.2, ky + 2.3, cz + 5.7, cx + 5.8, ky + 2.45, cz + 8.7, T_ZINC, [0.3, 0.45, 0.85], 1);
@@ -391,14 +392,22 @@ function buildDecor(map, W) {
     const ax = cx + 13, az = cz + 7; for (let k = 0; k < 6; k++) { const w = 1.4 - k * 0.2, y0 = y + k * 2.5; for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) L([ax + a * w, y0, az + b * w], [ax + a * (w - 0.2), y0 + 2.5, az + b * (w - 0.2)], [0.75, 0.2, 0.15], false); }
     geo.box(ax - 0.12, y + 15, az - 0.12, ax + 0.12, y + 15.4, az + 0.12, T_PLASTER, GLOW(1.6, 0.25, 0.2), 1); }
   // ---- mata: árvores (copas e palmeiras), pedras e arbustos ----
-  for (const t of map.trees) { const y = t.y;
-    if (t.palm) { const n = 6, top = y + t.h; for (let k = 0; k < n; k++) { const a = k / n, ox = Math.sin(a * 3) * 0.25 * a, oz = Math.cos(a * 2) * 0.2 * a; geo.box(t.x + ox - 0.14, y + t.h * a, t.z + oz - 0.14, t.x + ox + 0.14, y + t.h * (a + 1 / n), t.z + oz + 0.14, T_EARTH, [0.55, 0.45, 0.32], 1, 60); }
-      for (let k = 0; k < 7; k++) { const ang = k / 7 * Math.PI * 2 + t.x, dx = Math.cos(ang), dz = Math.sin(ang), c = [0.38, 0.68, 0.3, 0.75, 1, 0], l = t.r + 0.8;
-        geo.quad([[t.x, top, t.z], [t.x + dx * l * 0.5 - dz * 0.4, top + 0.25, t.z + dz * l * 0.5 + dx * 0.4], [t.x + dx * l, top - 1.0, t.z + dz * l], [t.x + dx * l * 0.5 + dz * 0.4, top + 0.25, t.z + dz * l * 0.5 - dx * 0.4]], [[0, 0], [0.5, 0.2], [1, 0], [0.5, -0.2]], T_EARTH, [c, c, c, c]); } }
-    else { geo.box(t.x - 0.16, y, t.z - 0.16, t.x + 0.16, y + t.h * 0.55, t.z + 0.16, T_EARTH, [0.45, 0.35, 0.25], 1, 60); const g = 0.36 + h2(t.x * 3 | 0, t.z * 3 | 0, 1) * 0.12;
-      for (let k = 0; k < 3; k++) { const s = t.r * (1 - k * 0.22), ox = (h2(t.x * 9 | 0, k, 1) - 0.5) * 1.2, oz = (h2(t.z * 9 | 0, k, 2) - 0.5) * 1.2, yb = y + t.h * (0.42 + k * 0.18); geo.box(t.x + ox - s, yb, t.z + oz - s, t.x + ox + s, yb + t.h * 0.25 + 0.6, t.z + oz + s, T_EARTH, [g, g + 0.32, g - 0.05], 2); } } }
-  for (const r of map.rocks) { const s = r.s; geo.box(r.x - s * 0.6, r.y - 0.2, r.z - s * 0.5, r.x + s * 0.7, r.y + s * 0.9, r.z + s * 0.6, T_EARTH, [0.6, 0.6, 0.56], 1.5); geo.box(r.x - s * 0.3, r.y + s * 0.6, r.z - s * 0.3, r.x + s * 0.4, r.y + s * 1.2, r.z + s * 0.35, T_EARTH, [0.66, 0.65, 0.6], 1.5); }
-  for (const b of map.bushes) { const s = b.s; geo.box(b.x - s, b.y, b.z - s * 0.8, b.x + s, b.y + s * 1.1, b.z + s * 0.8, T_EARTH, [0.36, 0.62, 0.3], 1.2, 61); }
+  // ---- vegetação low poly: copas facetadas (cada face com uma cor só), troncos de 5 lados, pedras lapidadas ----
+  const tri = (a, b, c, col, sh) => { const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]; let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l; if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    const d = Math.max(0, nx * SUN[0] + ny * SUN[1] + nz * SUN[2]), k = [col[0], col[1], col[2], d * (sh == null ? 1 : sh), 0.82 + ny * 0.18, 0]; geo.quad([a, b, c, c], [[0, 0], [0.5, 1], [1, 0], [1, 0]], T_PLASTER, [k, k, k, k]); };
+  const cone = (x, y0, z, r, h, n, col, rot, y1) => { const top = [x, y0 + h, z], base = []; for (let k = 0; k < n; k++) { const a = rot + k / n * Math.PI * 2; base.push([x + Math.cos(a) * r, (y1 == null ? y0 : y1), z + Math.sin(a) * r]); }
+    for (let k = 0; k < n; k++) { const p0 = base[k], p1 = base[(k + 1) % n], f = 0.9 + 0.2 * ((k * 7) % 3) / 2; tri(p0, top, p1, [col[0] * f, col[1] * f, col[2] * f]); } };
+  const gem = (x, y, z, r, h, n, col, rot) => { // duas pirâmides unidas pela base (copa arredondada facetada)
+    const mid = []; for (let k = 0; k < n; k++) { const a = rot + k / n * Math.PI * 2; mid.push([x + Math.cos(a) * r, y + h * 0.45, z + Math.sin(a) * r]); } const top = [x, y + h, z], bot = [x, y, z];
+    for (let k = 0; k < n; k++) { const p0 = mid[k], p1 = mid[(k + 1) % n], f = 0.88 + 0.24 * ((k * 5) % 4) / 3; tri(p0, top, p1, [col[0] * f, col[1] * f, col[2] * f]); tri(p0, p1, bot, [col[0] * f * 0.8, col[1] * f * 0.8, col[2] * f * 0.8], 0.6); } };
+  for (const t of map.trees) { const y = t.y, rot = h2(t.x * 3 | 0, t.z * 3 | 0, 4) * 6.28;
+    if (t.palm) { const top = y + t.h; cone(t.x, y, t.z, 0.2, t.h + 0.2, 5, [0.55, 0.43, 0.3], rot);
+      for (let k = 0; k < 6; k++) { const a = rot + k / 6 * Math.PI * 2, dx = Math.cos(a), dz = Math.sin(a), l = t.r + 1, c = [0.34, 0.62, 0.28]; tri([t.x, top, t.z], [t.x + dx * l - dz * 0.5, top - 0.8, t.z + dz * l + dx * 0.5], [t.x + dx * l + dz * 0.5, top - 0.8, t.z + dz * l - dx * 0.5], c); } }
+    else { cone(t.x, y, t.z, 0.24, t.h * 0.62, 5, [0.47, 0.36, 0.26], rot); const g0 = 0.3 + h2(t.x * 3 | 0, t.z * 3 | 0, 1) * 0.14, col = [g0, g0 + 0.34, g0 - 0.06];
+      if (h2(t.x * 5 | 0, t.z * 5 | 0, 2) < 0.4) { cone(t.x, y + t.h * 0.3, t.z, t.r * 1.05, t.h * 0.5, 6, col, rot); cone(t.x, y + t.h * 0.58, t.z, t.r * 0.78, t.h * 0.45, 6, [col[0] * 1.08, col[1] * 1.08, col[2] * 1.08], rot + 0.5); }
+      else gem(t.x, y + t.h * 0.36, t.z, t.r * 1.05, t.h * 0.72, 7, col, rot); } }
+  for (const r of map.rocks) { const s2 = r.s, rot = h2(r.x * 7 | 0, r.z * 7 | 0, 3) * 6.28; gem(r.x, r.y - 0.25, r.z, s2 * 0.75, s2 * 1.35, 5, [0.6, 0.59, 0.55], rot); }
+  for (const b of map.bushes) { const s2 = b.s, rot = h2(b.x * 7 | 0, b.z * 7 | 0, 5) * 6.28; gem(b.x, b.y - 0.1, b.z, s2, s2 * 1.25, 6, [0.36, 0.62, 0.3], rot); }
   // casas: decoração das lajes
   // decoração das lajes: caixas, antenas, varais, obras
   const CLOTH = [[0.9, 0.2, 0.2], [0.2, 0.5, 0.9], [0.95, 0.85, 0.2], [0.95, 0.95, 0.95], [0.3, 0.7, 0.3], [0.9, 0.5, 0.7]];
