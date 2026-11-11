@@ -4,11 +4,11 @@ FPS multiplayer de navegador ambientado numa comunidade carioca fictícia. Modo 
 
 ## Mapa (versão 2.4) — reconstruído a partir do mapa oficial
 
-250 × 141 m, com a mesma organização da imagem de referência (norte para cima). O relevo é **suave e moderado** (morros arredondados de até ~5 m, chão contínuo sem degraus); as casas ficam em **quadras com lotes regulares** e **não há becos sem saída** — o teste automático `nenhum beco ou rua sem saída` confere isso a cada mudança no mapa:
+312 × 176 m (ampliado 25% em cada direção), com a mesma organização da imagem de referência (norte para cima). O relevo é **suave e moderado** (morros arredondados de até ~5 m, chão contínuo sem degraus); as casas ficam em **quadras com lotes regulares** e **não há becos sem saída** — o teste automático `nenhum beco ou rua sem saída` confere isso a cada mudança no mapa:
 
 - **Base Azul (Alto da Mata)**: clareira no alto, canto superior esquerdo.
 - **Base Vermelha (Morro do Cruzeiro)**: clareira no alto, canto superior direito, com o cruzeiro e a antena.
-- **Base A**: clareira no meio da mata, de frente para a ponte do meio. **Base B**: Praça Central. **Base C**: dentro da Quadra do Baile.
+- **Base A**: Coração da Mata, no fundo da mata densa (distância parecida para os dois times). **Base B**: Largo da Serra, no interior da favela do Escadão. **Base C**: Quadra do Baile, no interior da favela do Valão.
 - **Mata Central** com trilhas de terra, clareiras, palmeiras, árvores, pedras e arbustos. As copas tapam a visão (não as balas).
 - **Favela do Escadão** (esquerda): Vila da Serra, Escadão Principal com a bandeira pintada nos degraus (sobe da Praça Central até a plataforma do Alto do Escadão e desce do outro lado até a Saída do Alto) e Beco da Mina.
 - **Avenida das Américas** (uma faixa por sentido, carros nos dois sentidos) e o **canal / valão** com contenção, margens e três pontes.
@@ -22,6 +22,10 @@ Quando outros jogadores trocam tiros por perto, o jogo toca as gravações longa
 **Chat de voz por proximidade** (salas online): botão de microfone ao lado do som. O microfone é enviado em pedaços pequenos e comprimidos pelo próprio Socket.IO do jogo; o servidor repassa cada pedaço só para quem está a até 30 m de quem fala (volume cheio até 4 m). Não depende de conexão direta entre os jogadores. O navegador pede permissão para o microfone (precisa de HTTPS — o Render já fornece).
 
 **Entrar numa sala**: o jogador escolhe Azul ou Vermelho. Se o time estiver completo com bots, um bot sai e o jogador assume o lugar dele (também com a partida em andamento); ao sair, o personagem volta a ser bot.
+
+**Polícia** (`CONFIG.police`): a primeira operação acontece num momento sorteado entre 1min30 e 7min, e as seguintes com intervalo sorteado entre 2min20 e 9min20 (a duração também é sorteada). A polícia escolhe um time (com leve preferência por quem está na frente), três viaturas descem a avenida com sirene e entram na favela dele pela passagem de baixo, e 15 policiais tentam tomar as bases daquela favela (Azul: B e A; Vermelho: C e A). A sirene só é ouvida a menos de ~70 m da viatura. Base com a polícia não pontua. A operação termina quando todos os policiais caem ou depois de ~3 min, e as bases ocupadas voltam a ficar neutras.
+
+**Atropelamento**: carro em movimento mata quem entra na frente; os carros freiam para quem está longe o bastante.
 
 O ciclo de **dia e noite** dura 20 minutos (configurável em `CONFIG.dayLength`). Postes, janelas, refletores e faróis acendem ao escurecer.
 
