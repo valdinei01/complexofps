@@ -8,17 +8,16 @@ function angDiff(a, b) { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; wh
 
 // ---------- mapa: grade de 0,5 m ----------
 // Reconstrução a partir do MAPA OFICIAL (imagem de referência). Coordenadas da imagem (px) viram metros:
-// x = px * 0,15 (leste) e z = (940 - py) * 0,15 (norte). Mapa: 250 m (leste-oeste) x 141 m (norte-sul).
-const CELL = 0.5, MW = 250, ML = 141, GX = 500, GZ = 282, NC = GX * GZ, MID = 70;
+// x = px * 0,1875 (leste) e z = (940 - py) * 0,1875 (norte). Mapa: 312 m (leste-oeste) x 176 m (norte-sul) — ampliado 25% em cada direção.
+const CELL = 0.5, MW = 312, ML = 176, GX = 624, GZ = 352, NC = GX * GZ, MID = 88;
+const SC = 1.25; // escala das coordenadas em metros do traçado original (ruas, escadão, morros, quadra)
+const SCP = a => a.map(q => [q[0] * SC, q[1] * SC]);
 const K_VOID = 0, K_AVE = 1, K_WALK = 2, K_STREET = 3, K_ESC = 4, K_BECO = 5, K_ROOF = 6, K_BLOCK = 7, K_PLAZA = 8, K_LOT = 9, K_TRAIL = 10, K_MATA = 11;
 const WALKABLE = new Uint8Array([0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1]);
 // materiais de bloco
 const B_MURO = 1, B_TANK = 2, B_GUARD = 3, B_WALL = 4, B_INVIS = 5, B_TANK2 = 6, B_SAND = 7, B_JERSEY = 8, B_BRICKS = 9, B_BARREL = 10, B_SUPPLY = 11, B_ROCK = 12, B_FENCE = 13, B_MODEL = 14;
-// construções modeladas em 3D (public/models): tamanho real em metros (largura x, profundidade z, altura)
-const MODEL_DEFS = [{"name": "casa1", "label": "Casa de dois andares", "s": 7.6, "w": 6.33, "d": 6.58, "h": 7.45, "cx": -0.0001, "cz": 0.0001, "y0": -0.4907}, {"name": "comercio", "label": "Com\u00e9rcio", "s": 8.4, "w": 5.52, "d": 8.22, "h": 6.97, "cx": 0.0, "cz": 0.0002, "y0": -0.4149}, {"name": "skj", "label": "Casa com varanda", "s": 7.8, "w": 7.13, "d": 6.2, "h": 7.65, "cx": 0.0002, "cz": 0.0002, "y0": -0.4906}, {"name": "ssjj", "label": "Sobrado de tr\u00eas andares", "s": 9.4, "w": 5.55, "d": 4.61, "h": 9.19, "cx": -0.0003, "cz": 0.0001, "y0": -0.4891}, {"name": "xx", "label": "Casa com laje", "s": 7.6, "w": 6.18, "d": 6.23, "h": 7.44, "cx": -0.0001, "cz": 0.0001, "y0": -0.4895}, {"name": "zss", "label": "Casa geminada", "s": 8.8, "w": 7.21, "d": 8.64, "h": 6.9, "cx": 0.0003, "cz": 0.0001, "y0": -0.3744}];
-const MODEL_COUNT = { casa1: 8, comercio: 6, skj: 8, ssjj: 8, xx: 8, zss: 7 };
 const STEP_UP = 0.55, NAV_STEP = 0.5, NAV_DROP = 3.4;
-const PXS = 0.15, P = (px, py) => [px * PXS, (940 - py) * PXS], PL = a => a.map(q => P(q[0], q[1]));
+const PXS = 0.1875, P = (px, py) => [px * PXS, (940 - py) * PXS], PL = a => a.map(q => P(q[0], q[1]));
 // ---- catálogo de setores da imagem (px) ----
 const AVE_PTS = PL([[1215, -80], [1205, 0], [1195, 120], [1150, 230], [1065, 330], [1020, 420], [985, 520], [930, 620], [870, 720], [820, 820], [790, 940], [780, 1020]]);
 const CANAL_PTS = PL([[1300, -80], [1290, 40], [1270, 150], [1215, 260], [1140, 360], [1095, 450], [1055, 560], [1005, 660], [965, 760], [935, 860], [915, 940], [910, 1020]]);
@@ -29,19 +28,21 @@ const BRIDGES = [PL([[1178, 212], [1272, 232]]), PL([[1046, 466], [1124, 466]]),
 const POLY_LEFT = PL([[0, 255], [120, 232], [230, 252], [330, 300], [385, 362], [430, 432], [470, 520], [560, 562], [640, 640], [705, 700], [745, 765], [735, 850], [700, 945], [0, 945]]);
 const POLY_RIGHT = PL([[1150, 250], [1232, 232], [1335, 250], [1420, 298], [1560, 318], [1675, 330], [1675, 945], [955, 945], [985, 800], [1035, 690], [1075, 560], [1118, 452], [1168, 352]]);
 const CLEAR = { // clareiras e praças: centro (m), raios (m), altura do piso
-  azul: { c: P(360, 160), rx: 17.5, rz: 11, h: 4.5, name: 'Base Azul (Alto da Mata)' },
-  A: { c: P(820, 200), rx: 17, rz: 11, h: 3, name: 'Base A (Clareira da Mata)' },
-  verm: { c: P(1510, 182), rx: 18.5, rz: 11, h: 4.5, name: 'Base Vermelha (Morro do Cruzeiro)' },
-  praca: { c: P(430, 712), rx: 14, rz: 10, h: 0, name: 'Praça Central' },
-  C: { c: P(1225, 716), rx: 7.5, rz: 5.5, h: 0, name: 'Base C (Canal)' },
-  cl1: { c: P(600, 420), rx: 6, rz: 5, h: null }, cl2: { c: P(700, 615), rx: 5.5, rz: 4.5, h: null },
+  azul: { c: P(360, 160), rx: 21.875, rz: 13.75, h: 4.5, name: 'Base Azul (Alto da Mata)' },
+  A: { c: [163, 133], rx: 12, rz: 10, h: 1.2, name: 'Base A (Coração da Mata)' },
+  B: { c: [16 * SC, 35 * SC], rx: 11.5, rz: 9.8, h: 0, name: 'Largo da Serra (Base B)' },
+  clN: { c: P(820, 200), rx: 17.5, rz: 11.25, h: 3 },   // antiga clareira do norte: continua como clareira, sem base
+  verm: { c: P(1510, 182), rx: 23.125, rz: 13.75, h: 4.5, name: 'Base Vermelha (Morro do Cruzeiro)' },
+  praca: { c: P(430, 712), rx: 17.5, rz: 12.5, h: 0, name: 'Praça Central' },
+  C: { c: P(1225, 716), rx: 9.375, rz: 6.875, h: 0, name: 'Pracinha do Canal' },
+  cl1: { c: P(600, 420), rx: 7.5, rz: 6.25, h: null }, cl2: { c: P(700, 615), rx: 6.875, rz: 5.625, h: null },
 };
-const QUADRA = { x: 205.5, z: 65.25, hx: 13, hz: 8, h: 0.8 };   // Quadra do Baile (piso 26 x 16 m)
-const STAGE = { x: 205.5, z: 77.2, hx: 5, hz: 2.2, h: 1.7 };     // palco ao norte da quadra
-const SOUND_DESK = { x: 205.5, z: 76.2 };                        // mesa de som do baile (em cima do palco)
+const QUADRA = { x: 224 * SC, z: 56 * SC, hx: 13, hz: 8, h: 0.8 };   // Quadra do Baile (piso 26 x 16 m)
+const STAGE = { x: QUADRA.x, z: QUADRA.z + 11.7, hx: 5, hz: 2.2, h: 1.7 };     // palco ao norte da quadra
+const SOUND_DESK = { x: STAGE.x, z: STAGE.z - 1 };                        // mesa de som do baile (em cima do palco)
 // Malha organizada de ruas (em metros). Regra: toda rua e todo beco terminam em outra rua, numa praça ou na mata —
 // não existe beco sem saída (há um teste automático que confere isso).
-const SEG = (name, kind, hw, pts) => ({ name, kind, hw, pts });
+const SEG = (name, kind, hw, pts) => ({ name, kind, hw, pts: SCP(pts) });
 const STREETS = [
   // ---- Favela do Escadão (esquerda) ----
   SEG('Rua da Mina', K_STREET, 2.7, [[3, 10.2], [82, 10.2]]),
@@ -58,6 +59,7 @@ const STREETS = [
   SEG('Beco do Varal', K_BECO, 1.8, [[14, 10.2], [14, 26]]),
   SEG('Beco da Bica', K_BECO, 1.8, [[4, 52], [24, 52]]),
   SEG('Beco do Sapo', K_BECO, 1.8, [[34, 26], [34, 44]]),
+  SEG('Beco do Largo', K_BECO, 1.8, [[4, 35], [9, 35]]),
   SEG('Rua do Alto', K_STREET, 3.1, [[27, 86], [27, 108]]),
   SEG('Ladeira do Alto', K_STREET, 2.9, [[22, 77], [4, 77]]),
   // ---- Favela do Valão (direita) ----
@@ -66,11 +68,12 @@ const STREETS = [
   SEG('Rua Vila Nova', K_STREET, 2.7, [[156, 46], [246, 46]]),
   SEG('Rua da Quadra', K_STREET, 2.7, [[176, 86], [246, 86]]),
   SEG('Travessa do Canal', K_STREET, 2.5, [[176, 10], [176, 86]]),
-  SEG('Travessa do Baile', K_STREET, 2.5, [[205, 10], [205, 56]]),
+  SEG('Travessa do Baile', K_STREET, 2.5, [[205, 10], [205, 86]]),
   SEG('Travessa do Topo', K_STREET, 2.5, [[230, 10], [230, 86]]),
   SEG('Rua do Cruzeiro', K_STREET, 2.6, [[246, 10], [246, 95]]),
-  SEG('Beco da Quadra', K_BECO, 1.9, [[176, 66], [192, 66]]),
-  SEG('Beco do Pagode', K_BECO, 1.9, [[219, 66], [230, 66]]),
+  SEG('Beco da Quadra', K_BECO, 1.9, [[176, 66], [205, 66]]),
+  SEG('Beco do Baile', K_BECO, 1.9, [[205, 58], [214, 58]]),
+  SEG('Beco do Pagode', K_BECO, 1.9, [[205, 74], [230, 74], [230, 86]]),
   SEG('Beco da Vila Nova', K_BECO, 1.8, [[230, 64], [246, 64]]),
   SEG('Beco do Topo', K_BECO, 1.8, [[190, 26], [190, 46]]),
 ];
@@ -82,12 +85,16 @@ const TRAILS = [ // trilhas de terra na mata
   { name: 'Trilha do Sul', pts: PL([[600, 560], [700, 600], [800, 640], [890, 650]]) },
   { name: 'Trilha Norte', pts: PL([[760, 128], [840, 62], [950, 40], [1060, 70], [1150, 100]]) },
   { name: 'Trilha do Cruzeiro', pts: PL([[1300, 367], [1300, 255], [1350, 210], [1400, 190]]) },
+  { name: 'Trilha da Base A', pts: [[163, 133], [170, 118], [176, 104], [182.5, 89]] },
+  { name: 'Trilha do Meio', pts: [[163, 133], [148, 112], [140, 84], [150, 56]] },
+  { name: 'Trilha de Cima', pts: [[163, 133], [174.75, 138.4]] },
+  { name: 'Trilha da Vila', pts: [[163, 133], [140, 120], [118, 108], [90, 102]] },
   { name: 'Trilha da Ponte', pts: PL([[1178, 214], [1110, 210], [1040, 206], [960, 200], [932, 198]]) },
 ];
 // Escadão Principal: lances retos e patamares (sobe da Praça Central até o Alto do Escadão)
 const ESC = {
-  flights: [{ ax: 'z', x0: 51, x1: 57, a0: 44.5, a1: 57, h0: 0, h1: 1.7 }, { ax: 'z', x0: 51, x1: 57, a0: 61, a1: 71, h0: 1.7, h1: 3.4 }, { ax: 'x', z0: 70.5, z1: 76.5, a0: 44, a1: 34, h0: 3.4, h1: 5 }],
-  lands: [{ x0: 48, x1: 60, z0: 37.5, z1: 44.5, h: 0 }, { x0: 50, x1: 58, z0: 57, z1: 61, h: 1.7 }, { x0: 44, x1: 58, z0: 71, z1: 76.5, h: 3.4 }, { x0: 22, x1: 34, z0: 68, z1: 86, h: 5 }],
+  flights: [{ ax: 'z', x0: 63.75, x1: 71.25, a0: 55.625, a1: 71.25, h0: 0, h1: 1.7 }, { ax: 'z', x0: 63.75, x1: 71.25, a0: 76.25, a1: 88.75, h0: 1.7, h1: 3.4 }, { ax: 'x', z0: 88.125, z1: 95.625, a0: 55, a1: 42.5, h0: 3.4, h1: 5 }],
+  lands: [{ x0: 60, x1: 75, z0: 46.875, z1: 55.625, h: 0 }, { x0: 62.5, x1: 72.5, z0: 71.25, z1: 76.25, h: 1.7 }, { x0: 55, x1: 72.5, z0: 88.75, z1: 95.625, h: 3.4 }, { x0: 27.5, x1: 42.5, z0: 85, z1: 107.5, h: 5 }],
 };
 let ESC_LAND = ESC.lands.map(l => ({ x: (l.x0 + l.x1) / 2, z: (l.z0 + l.z1) / 2, hx: (l.x1 - l.x0) / 2, hz: (l.z1 - l.z0) / 2, h: l.h }));
 const PRACA = { x: CLEAR.praca.c[0], z: CLEAR.praca.c[1], r: 4.5, h: CLEAR.praca.h };
@@ -108,7 +115,7 @@ const aveEast = z => aveX(z) + AVE_HW + SIDEW;
 const ellR = (x, z, k) => Math.hypot((x - k.c[0]) / k.rx, (z - k.c[1]) / k.rz);
 // relevo: pontos de controle (m) — morros nas bases e no Alto do Escadão, baixada na avenida e no canal
 // relevo suave e moderado: morros arredondados (perfil (1-r²)², sem quinas) somados, baixada na avenida e no canal
-const HILLS = [[28, 80, 5, 40, 36], [54, 117, 3.2, 44, 34], [10, 120, 3, 30, 28], [123, 110, 2.4, 40, 32], [100, 72, 1.8, 38, 36], [226, 114, 3.2, 44, 34], [244, 128, 2.6, 28, 24], [236, 46, 2.4, 32, 34], [214, 98, 1.8, 30, 22], [8, 40, 1.6, 26, 30]];
+const HILLS = [[35, 100, 5, 50, 45], [67.5, 146.25, 3.2, 55, 42.5], [12.5, 150, 3, 37.5, 35], [153.75, 137.5, 2.4, 50, 40], [125, 90, 1.8, 47.5, 45], [282.5, 142.5, 3.2, 55, 42.5], [305, 160, 2.6, 35, 30], [295, 57.5, 2.4, 40, 42.5], [267.5, 122.5, 1.8, 37.5, 27.5], [10, 50, 1.6, 32.5, 37.5]];
 const hillsAt = (x, z) => { let g = 0; for (const [cx, cz, h, rx, rz] of HILLS) { const r2 = ((x - cx) / rx) ** 2 + ((z - cz) / rz) ** 2; if (r2 < 1) g += h * (1 - r2) * (1 - r2); } return g; };
 function terrain(x, z) {
   let g = hillsAt(x, z);
@@ -120,7 +127,7 @@ function terrain(x, z) {
   for (const b of BRIDGES) g *= sm(3, 16, polyDist(x, z, b));
   return Math.max(0, g);
 }
-for (const k of ['azul', 'A', 'verm']) CLEAR[k].h = Math.round(hillsAt(CLEAR[k].c[0], CLEAR[k].c[1]) * 20) / 20; // clareira no nível natural do morro
+for (const k of ['azul', 'A', 'verm', 'clN']) CLEAR[k].h = Math.round(hillsAt(CLEAR[k].c[0], CLEAR[k].c[1]) * 20) / 20; // clareira no nível natural do morro
 
 function escAt(x, z) { // altura do escadão nesta célula (ou null)
   for (const L of ESC.lands) if (x >= L.x0 && x <= L.x1 && z >= L.z0 && z <= L.z1) return { h: L.h, flat: true };
@@ -152,42 +159,15 @@ function buildMap(seed) {
     else if (adA <= AVE_HW) k = K_AVE;
     else if (adA <= AVE_HW + SIDEW) k = K_WALK;
     if (k < 0) { const e = escAt(x, z); if (e) { k = K_ESC; } }
-    if (k < 0) { for (const key of ['praca', 'C']) if (ellR(x, z, CLEAR[key]) <= 1) { k = K_PLAZA; sn = -10; } }
+    if (k < 0) { for (const key of ['praca', 'C', 'B']) if (ellR(x, z, CLEAR[key]) <= 1) { k = K_PLAZA; sn = -10; } }
     if (k < 0 && Math.abs(x - STAGE.x) <= STAGE.hx && Math.abs(z - STAGE.z) <= STAGE.hz) { k = K_PLAZA; sn = -12; }
     if (k < 0 && Math.abs(x - QUADRA.x) <= QUADRA.hx + 2 && Math.abs(z - QUADRA.z) <= QUADRA.hz + 2) { k = K_PLAZA; sn = -11; }
     if (k < 0) for (let s = 0; s < STREETS.length; s++) { const S = STREETS[s]; if (polyDist(x, z, S.pts) <= S.hw) { k = S.kind; sn = s; break; } }
     if (k < 0) for (let s = 0; s < TRAILS.length; s++) if (polyDist(x, z, TRAILS[s].pts) <= 1.5) { k = K_TRAIL; sn = 100 + s; break; }
-    if (k < 0) { for (const key of ['azul', 'A', 'verm', 'cl1', 'cl2']) if (ellR(x, z, CLEAR[key]) <= 1) { k = K_MATA; sn = -20; } }
+    if (k < 0) { for (const key of ['azul', 'A', 'verm', 'clN', 'cl1', 'cl2']) if (ellR(x, z, CLEAR[key]) <= 1) { k = K_MATA; sn = -20; } }
     if (k < 0) k = (inPoly(x, z, POLY_LEFT) || inPoly(x, z, POLY_RIGHT)) && adC > CAN_HW + 4 ? K_LOT : K_MATA;
     K[c] = k; SN[c] = sn;
   }
-  // 1b) construções 3D: procura lotes livres de frente para uma rua (a frente do modelo, +z local, aponta para a rua)
-  const models = [];
-  { const isLot = c => K[c] === K_LOT, isRoad = c => K[c] === K_STREET || K[c] === K_BECO || K[c] === K_PLAZA || K[c] === K_WALK;
-    const cand = []; for (let j = 4; j < GZ - 4; j += 3) for (let i = 4; i < GX - 4; i += 3) if (isLot(idx(i, j))) cand.push([i, j]);
-    const RR = mulberry(seed + 555); for (let k = cand.length - 1; k > 0; k--) { const q = Math.floor(RR() * (k + 1)); const t = cand[k]; cand[k] = cand[q]; cand[q] = t; }
-    // prioriza os lugares mais frequentados (praça, entrada do escadão, quadra, Base C, ruas principais) para as construções 3D aparecerem bem
-    const POI = [CLEAR.praca.c, [54, 46], [QUADRA.x, QUADRA.z], CLEAR.C.c, [24, 26], [190, 10], [230, 46], [88, 30], [27, 90]];
-    const score = ([i, j]) => { const x = i * CELL, z = j * CELL; let d = 1e9; for (const q of POI) d = Math.min(d, Math.hypot(q[0] - x, q[1] - z)); return d + RR() * 18; };
-    const sc = new Map(cand.map(c => [c, score(c)])); cand.sort((a, b) => sc.get(a) - sc.get(b));
-    const order = []; for (const D of MODEL_DEFS) for (let n = 0; n < MODEL_COUNT[D.name]; n++) order.push(D);
-    for (const D of order) {
-      let done = false;
-      for (const [i0, j0] of cand) { if (done) break;
-        for (let rot = 0; rot < 4 && !done; rot++) {
-          const fw = (rot % 2 ? D.d : D.w) + 0.6, fd = (rot % 2 ? D.w : D.d) + 0.6, ci = Math.ceil(fw / CELL), cj = Math.ceil(fd / CELL);
-          if (i0 + ci >= GX - 2 || j0 + cj >= GZ - 2) continue;
-          let ok = true; for (let j = j0; j < j0 + cj && ok; j++) for (let i = i0; i < i0 + ci; i++) if (!isLot(idx(i, j))) { ok = false; break; }
-          if (!ok) continue;
-          // lado da frente: rot 0 = +z (norte), 1 = +x, 2 = -z, 3 = -x — precisa haver rua encostada
-          let front = 0; for (let t = 0; t < (rot % 2 ? cj : ci); t++) { const c = rot === 0 ? idx(i0 + t, j0 + cj) : rot === 2 ? idx(i0 + t, j0 - 1) : rot === 1 ? idx(i0 + ci, j0 + t) : idx(i0 - 1, j0 + t); if (isRoad(c)) front++; }
-          if (front < (rot % 2 ? cj : ci) * 0.5) continue;
-          const x = (i0 + ci / 2) * CELL, z = (j0 + cj / 2) * CELL;
-          if (models.some(m => Math.hypot(m.x - x, m.z - z) < (m.name === D.name ? 18 : 9))) continue;
-          let gmin = 1e9; for (let j = j0; j < j0 + cj; j++) for (let i = i0; i < i0 + ci; i++) gmin = Math.min(gmin, terrain((i + 0.5) * CELL, (j + 0.5) * CELL));
-          const y = Math.max(0, gmin - 0.15);
-          for (let j = j0; j < j0 + cj; j++) for (let i = i0; i < i0 + ci; i++) { const c = idx(i, j); K[c] = K_BLOCK; M[c] = B_MODEL; HV[c] = terrain((i + 0.5) * CELL, (j + 0.5) * CELL); H[c] = y + D.h; }
-          models.push({ name: D.name, x, z, y, rot, i0, j0, ci, cj }); done = true; } } } }
   // 2) lotes => casas (lotes em grade irregular)
   const LOT_W = 6, LOT_D = 7; // casas organizadas em quadras: lotes regulares de 6 x 7 m
   const plotOf = (x, z) => Math.floor(z / LOT_D) * 1000 + Math.floor(x / LOT_W);
@@ -202,11 +182,18 @@ function buildMap(seed) {
     houses.push({ id: houses.length, plot: pid, cells, shop: pid >= 100000 });
   }
   // sobras minúsculas viram calçada/beco
-  for (const h of houses) if (h.cells.length < 10) { for (const c of h.cells) { K[c] = K_BLOCK; M[c] = B_MURO; comp[c] = -1; } h.dead = true; } // sobras viram muro, nunca bolsão
+  // casas fininhas: toda casa precisa ter pelo menos 4 m nos dois sentidos; as menores são unidas à vizinha com a maior parede em comum
+  const MIN_SIDE = 4;
+  for (let pass = 0; pass < 4; pass++) for (const h of houses) { if (h.dead) continue; let i0 = 1e9, i1 = -1, j0 = 1e9, j1 = -1; for (const c of h.cells) { const i = c % GX, j = (c / GX) | 0; if (i < i0) i0 = i; if (i > i1) i1 = i; if (j < j0) j0 = j; if (j > j1) j1 = j; }
+    const wx = (i1 - i0 + 1) * CELL, wz = (j1 - j0 + 1) * CELL, fill = h.cells.length / ((i1 - i0 + 1) * (j1 - j0 + 1)); if (Math.min(wx, wz) >= MIN_SIDE && h.cells.length >= 40 && fill > 0.55) continue;
+    const share = new Map(); for (const c of h.cells) { const i = c % GX, j = (c / GX) | 0; for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const ni = i + a, nj = j + b; if (ni < 0 || nj < 0 || ni >= GX || nj >= GZ) continue; const o = comp[idx(ni, nj)]; if (o >= 0 && o !== h.id && !houses[o].dead) share.set(o, (share.get(o) || 0) + 1); } }
+    let best = -1, bn = 0; for (const [o, n] of share) if (n > bn) { bn = n; best = o; }
+    if (best >= 0 && bn >= 3) { const t = houses[best]; for (const c of h.cells) { comp[c] = best; t.cells.push(c); } h.cells = []; h.dead = true; }
+    else if (pass === 3) { for (const c of h.cells) { K[c] = K_BLOCK; M[c] = B_MURO; comp[c] = -1; } h.dead = true; } }
+  for (let c = 0; c < NC; c++) if (K[c] === K_ROOF && comp[c] >= 0) HID[c] = comp[c];
   // 3) alturas do chão
   for (let j = 0; j < GZ; j++) for (let i = 0; i < GX; i++) {
     const c = idx(i, j), x = (i + 0.5) * CELL, z = (j + 0.5) * CELL, g = terrain(x, z), k = K[c];
-    if (k === K_BLOCK && M[c] === B_MODEL) continue;
     if (k === K_AVE) H[c] = 0; else if (k === K_WALK) H[c] = 0.15;
     else if (k === K_ESC) H[c] = escAt(x, z).h;
     else if (SN[c] === -5 || SN[c] === -6) H[c] = WALK_H;
@@ -281,10 +268,10 @@ function buildMap(seed) {
   // 7) mata: árvores (troncos com colisão, copas que tapam a visão), pedras e arbustos
   const trees = [], rocks = [], bushes = [];
   const nearPath = (x, z, r) => { for (let a = -r; a <= r; a += CELL) for (let b = -r; b <= r; b += CELL) { const i = Math.floor((x + a) / CELL), j = Math.floor((z + b) / CELL); if (i < 0 || j < 0 || i >= GX || j >= GZ) continue; const k = K[idx(i, j)]; if (k !== K_MATA && k !== K_LOT && k !== K_ROOF) return true; } return false; };
-  for (let gz = 2; gz < ML - 2; gz += 4.2) for (let gx = 2; gx < MW - 2; gx += 4.2) {
+  for (let gz = 2; gz < ML - 2; gz += 3.3) for (let gx = 2; gx < MW - 2; gx += 3.3) { // mata densa
     const x = gx + (h2(gx * 7 | 0, gz * 7 | 0, 1) - 0.5) * 3, z = gz + (h2(gx * 7 | 0, gz * 7 | 0, 2) - 0.5) * 3, i = Math.floor(x / CELL), j = Math.floor(z / CELL), c = idx(i, j);
     if (K[c] !== K_MATA || SN[c] === -20) continue;
-    const r = h2(i, j, 3); if (r < 0.12) continue;
+    const r = h2(i, j, 3); if (r < 0.05) continue;
     if (nearPath(x, z, r < 0.25 ? 1.0 : 2.2)) { if (!nearPath(x, z, 1.0) && r > 0.6) bushes.push({ x, z, y: H[c], s: 0.6 + r * 0.6 }); continue; }
     if (r < 0.2) { rocks.push({ x, z, y: H[c], s: 0.8 + h2(i, j, 4) * 1.0 }); for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const q = idx(i + a, j + b); if (K[q] === K_MATA) { K[q] = K_BLOCK; M[q] = B_ROCK; HV[q] = H[q]; H[q] = H[q] + 0.9 + h2(i, j, 5) * 0.8; } } continue; }
     const palm = h2(i, j, 6) < 0.3, tall = 5 + h2(i, j, 7) * 7, cr = palm ? 2.2 : 2.4 + h2(i, j, 8) * 1.6;
@@ -305,14 +292,17 @@ function buildMap(seed) {
   const Cz = k => CLEAR[k].c;
   for (const k of ['azul', 'verm']) { const [cx, cz] = Cz(k); cover(cx - 9, cz - 3, cx - 7.5, cz - 1.5, B_BRICKS, 1.1); cover(cx + 7, cz + 1, cx + 8.5, cz + 2.5, B_BARREL, 1.0); cover(cx + 2, cz - 6, cx + 5, cz - 5.5, B_JERSEY, 1.0); }
   { const [cx, cz] = Cz('A'); cover(cx - 6, cz - 2, cx - 4.5, cz - 0.5, B_BRICKS, 1.1); cover(cx + 4.5, cz + 0.5, cx + 6, cz + 2, B_BRICKS, 1.1); cover(cx - 1, cz + 5, cx + 1.5, cz + 5.5, B_SAND, 0.9); cover(cx + 1, cz - 6, cx + 3.5, cz - 5.5, B_SAND, 0.9); }
+  { const [cx, cz] = Cz('B'); cover(cx - 5, cz - 2, cx - 4, cz - 1, B_BRICKS, 1.15); cover(cx + 4, cz + 1, cx + 5, cz + 2, B_BRICKS, 1.15); cover(cx - 1, cz + 4.5, cx + 1.5, cz + 5, B_SAND, 0.95); cover(cx + 1, cz - 5, cx + 3, cz - 4.5, B_BARREL, 1.0); }
   { const [cx, cz] = Cz('praca'); cover(cx - 7, cz - 3, cx - 6, cz - 2, B_BRICKS, 1.15); cover(cx + 6, cz + 2, cx + 7, cz + 3, B_BRICKS, 1.15); cover(cx - 1, cz - 6.5, cx + 1.5, cz - 6, B_JERSEY, 1.0); }
   { const [cx, cz] = Cz('C'); cover(cx - 4.5, cz + 2, cx - 3.5, cz + 3, B_BARREL, 1.0); cover(cx + 3, cz - 3, cx + 4.5, cz - 2.5, B_SAND, 0.9); }
+  // Base C dentro do baile: sacos de areia e caixas nas pontas da quadra
+  cover(QUADRA.x - 8.5, QUADRA.z - 1.5, QUADRA.x - 8, QUADRA.z + 1.5, B_SAND, 0.95); cover(QUADRA.x + 8, QUADRA.z - 1.5, QUADRA.x + 8.5, QUADRA.z + 1.5, B_SAND, 0.95); cover(QUADRA.x - 3, QUADRA.z - 6.5, QUADRA.x - 1.5, QUADRA.z - 5.5, B_BRICKS, 1.1); cover(QUADRA.x + 1.5, QUADRA.z + 5.5, QUADRA.x + 3, QUADRA.z + 6.5, B_BRICKS, 1.1);
   for (const t of [0, 1]) { const s = SUPPLY[t]; cover(s.x - 0.75, s.z + 0.6, s.x + 0.75, s.z + 1.1, B_SUPPLY, 1.0); }
   // alambrado da quadra (lados leste e oeste, com portões)
   for (let j = 0; j < GZ; j++) for (const xs of [QUADRA.x - QUADRA.hx - 1.75, QUADRA.x + QUADRA.hx + 1.75]) { const z = (j + 0.5) * CELL; if (Math.abs(z - QUADRA.z) > QUADRA.hz + 1.5 || Math.abs(z - QUADRA.z) < 2.2) continue; const c = idx(Math.floor(xs / CELL), j); if (K[c] === K_PLAZA) { K[c] = K_BLOCK; M[c] = B_FENCE; HV[c] = H[c]; H[c] += 3.2; } }
   for (let c = 0; c < NC; c++) HV[c] = (K[c] === K_BLOCK && M[c] === B_SUPPLY) ? H[c] - 1.0 : (K[c] === K_BLOCK && (M[c] === B_INVIS || M[c] === B_FENCE || M[c] === B_MODEL)) ? HV[c] : H[c];
   ESC_LAND = ESC.lands.map(l => ({ x: (l.x0 + l.x1) / 2, z: (l.z0 + l.z1) / 2, hx: (l.x1 - l.x0) / 2, hz: (l.z1 - l.z0) / 2, h: l.h }));
-  const map = { K, H, HV, M, HID, SN, CT, CB, houses, idx, decor: [], poles: [], cars: [], lamps: [], trees, rocks, bushes, models, seed, x0Esc: ESC_X0 };
+  const map = { K, H, HV, M, HID, SN, CT, CB, houses, idx, decor: [], poles: [], cars: [], lamps: [], trees, rocks, bushes, seed, x0Esc: ESC_X0 };
   placeProps(map, R);
   return map;
 }

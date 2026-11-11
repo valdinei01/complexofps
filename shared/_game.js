@@ -12,6 +12,7 @@ const CONFIG = {
   refill: { time: 3, radius: 2.6, cooldown: 5 },
   grenade: { start: 2, max: 2, fuse: 2.6, radius: 6.5, damage: 115, speed: 15, cooldown: 1.2 }, // granadas: quantidade e efeito em área
   baile: { radius: 2.8, cooldown: 2 },   // caixa de som do baile: liga/desliga perto da mesa de som
+  police: { first: [90, 420], every: [140, 560], duration: [150, 260], cars: 3, perCar: 5, hp: 130, speed: 11 }, // operações policiais (horário sorteado)
   dayLength: 20 * 60,    // ciclo completo de dia e noite (segundos reais)
   dayStart: 0.3,         // hora inicial (0 = meia-noite, 0.25 = 6h, 0.5 = meio-dia, 0.75 = 18h)
   weapons: {
@@ -19,15 +20,16 @@ const CONFIG = {
     pistol: { name: 'PISTOLA', mag: 15, res: 75, rate: 0.2, body: 21, head: 3.0, spread: 0.004, auto: false, reload: 1.5, range: 120, swap: 0.4 },
   },
 };
-const TEAM = [{ name: 'Azul', col: [0.18, 0.42, 0.86], css: '#2F7BE0', dark: [0.1, 0.2, 0.45] }, { name: 'Vermelho', col: [0.82, 0.2, 0.16], css: '#D8402F', dark: [0.45, 0.1, 0.08] }];
+const TEAM = [{ name: 'Azul', col: [0.18, 0.42, 0.86], css: '#2F7BE0', dark: [0.1, 0.2, 0.45] }, { name: 'Vermelho', col: [0.82, 0.2, 0.16], css: '#D8402F', dark: [0.45, 0.1, 0.08] }, { name: 'Polícia', col: [0.16, 0.19, 0.24], css: '#8FA6C8', dark: [0.08, 0.09, 0.12] }];
+const POLICE_NAMES = ['Sd. Rocha', 'Cb. Lima', 'Sd. Prado', 'Sgt. Vieira', 'Sd. Nunes', 'Cb. Moura', 'Sd. Dias', 'Ten. Castro'];
 const BOT_NAMES = [['Tico', 'Bira', 'Neném', 'Pardal', 'Dentinho'], ['Zóio', 'Formiga', 'Juninho', 'Cabeça', 'Mago']];
 const NPC_NAMES = ['Dona Cida', 'Seu Jorge', 'Tia Lurdes', 'Marquinho', 'Dona Neide', 'Seu Tião', 'Rosinha', 'Vovó Zélia'];
 const DIFF_FPS = { facil: { react: 0.95, err: 0.095, fov: 1.8, turn: 3.0, burst: 3, gap: 0.65, spread: 0.026, think: 0.28 }, normal: { react: 0.62, err: 0.062, fov: 2.0, turn: 4.4, burst: 4, gap: 0.45, spread: 0.016, think: 0.2 }, dificil: { react: 0.4, err: 0.04, fov: 2.2, turn: 6.0, burst: 5, gap: 0.33, spread: 0.012, think: 0.15 }, elite: { react: 0.26, err: 0.026, fov: 2.4, turn: 7.8, burst: 6, gap: 0.24, spread: 0.009, think: 0.11, grenade: 2 } };
 const SKIN = [[0.85, 0.66, 0.5], [0.62, 0.44, 0.3], [0.45, 0.3, 0.2], [0.75, 0.55, 0.4], [0.35, 0.24, 0.16]];
 const BASES_DEF = () => [
-  { id: 'A', name: 'Clareira da Mata', x: CLEAR.A.c[0] + 10, z: CLEAR.A.c[1] - 1, r: 4.6 }, // lado leste da clareira: distância parecida para os dois times
-  { id: 'B', name: 'Praça Central', x: CLEAR.praca.c[0], z: CLEAR.praca.c[1], r: 4.6 },
-  { id: 'C', name: 'Canal', x: CLEAR.C.c[0], z: CLEAR.C.c[1], r: 3.6 },
+  { id: 'A', name: 'Coração da Mata', x: CLEAR.A.c[0], z: CLEAR.A.c[1], r: 5 },      // no fundo da mata densa
+  { id: 'B', name: 'Largo da Serra', x: CLEAR.B.c[0], z: CLEAR.B.c[1], r: 5 },       // no interior da favela do Escadão
+  { id: 'C', name: 'Quadra do Baile', x: QUADRA.x, z: QUADRA.z, r: 5 },              // no interior da favela do Valão, com o baile
 ];
 const STATION = team => ({ x: SUPPLY[team].x, z: SUPPLY[team].z });
 
@@ -35,7 +37,7 @@ const STATION = team => ({ x: SUPPLY[team].x, z: SUPPLY[team].z });
 function makeGame(map, W, opts) {
   opts = opts || {};
   const rnd = opts.rng || Math.random;
-  const G = { map, W, t: 0, actors: [], npcs: [], score: [0, 0], over: false, winner: -1, feed: [], fx: { tracers: [], puffs: [], flashes: [] }, events: [], diff: DIFF_FPS[opts.diff] || DIFF_FPS.normal, stats: { unstuck: 0, shots: 0, hits: 0 }, nextId: 1, timeLeft: CONFIG.timeLimit, cfg: CONFIG, dayT: opts.dayT != null ? opts.dayT : CONFIG.dayStart };
+  const G = { map, W, t: 0, actors: [], npcs: [], score: [0, 0], police: { phase: 'idle', next: 0, team: -1, endT: 0, cars: [], ops: 0 }, over: false, winner: -1, feed: [], fx: { tracers: [], puffs: [], flashes: [] }, events: [], diff: DIFF_FPS[opts.diff] || DIFF_FPS.normal, stats: { unstuck: 0, shots: 0, hits: 0 }, nextId: 1, timeLeft: CONFIG.timeLimit, cfg: CONFIG, dayT: opts.dayT != null ? opts.dayT : CONFIG.dayStart };
   // ---------- nascimentos e rede principal de navegação ----------
   // rede principal de navegação: calculada uma vez por mapa e reaproveitada (evita travar o servidor a cada partida)
   if (!W.cache.main) { const hub = W.nearestOK(PRACA.x, PRACA.z, 6); W.cache.main = { reachS: W.reach(hub, false, false), backS: W.reach(hub, false, true) }; }
@@ -71,6 +73,11 @@ function makeGame(map, W, opts) {
     in: { mx: 0, mz: 0, dx: 0, dy: 0, fire: false, aim: false, jump: false, crouch: false, reload: false, sprint: false, swap: false, use: false, gren: false },
     ai: ctrl === 'bot' ? { path: null, pi: 0, goal: -1, target: null, react: 0, seenT: -9, last: null, strafe: 1, strafeT: 0, stuckT: 0, lx: 0, lz: 0, stuck: 0, burst: 0, burstGap: 0, ex: 0, ey: 0, holdT: 0, lookYaw: 0, heard: null, think: rnd() * 0.2, wantPath: false, fail: 0, mode: 'roam', track: 0 } : null });
   G.mk = mk;
+  const BOT_NAMES = ['Zeca', 'Tonho', 'Biu', 'Neguinho', 'Marreta', 'Cabeça', 'Fumaça', 'Tatu', 'Pezão', 'Ligeiro'];
+  // um jogador assume o lugar de um bot do time escolhido (mantém posição, vida e placar do personagem)
+  G.takeOver = (team, name, key) => { const a = G.actors.find(q => q.isBot && q.team === team && q.alive) || G.actors.find(q => q.isBot && q.team === team); if (!a) return null; a.isBot = false; a.ctrl = 'remote'; a.ai = null; a.name = name; a.key = key || null; a.in = mk(team, 0, 'remote', '').in; G.nextId--; return a; };
+  // quando o jogador sai, o personagem volta a ser bot (os times continuam completos)
+  G.toBot = a => { const t = mk(a.team, 0, 'bot', ''); G.nextId--; a.isBot = true; a.ctrl = 'bot'; a.ai = t.ai; a.key = null; a.in = t.in; a.name = BOT_NAMES[a.id % BOT_NAMES.length] + ' (bot)'; return a; };
   if (opts.humans) { for (const h of opts.humans) G.actors.push(mk(h.team, G.actors.length, opts.local ? 'local' : 'remote', h.name, h.key)); }
   else { G.player = mk(opts.team || 0, 0, opts.allBots ? 'bot' : 'local', opts.name || 'Você'); G.actors.push(G.player); }
   const botsWanted = opts.bots || { 0: 5, 1: 5 };
@@ -91,7 +98,7 @@ function makeGame(map, W, opts) {
     W.dyn.length = 0;
     for (const c of G.cars) {
       let target = c.max;
-      const blocks = a => { if (!a.alive) return false; const dx = a.x - c.x, dz = a.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx; return al > 0 && al < 10 && Math.abs(la) < 2.2; };
+      const blocks = a => { if (!a.alive) return false; const dx = a.x - c.x, dz = a.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx; return al > 0 && al < 15 && Math.abs(la) < 2.2; };
       for (const a of G.actors) if (blocks(a)) { target = 0; c.wait = (c.wait || 0) + dt;
         // bot parado na frente do carro: sai da faixa para o lado mais próximo da calçada
         if (a.ai && c.wait > 1.5 && !(a.ai.side > 0)) { const la = -(a.x - c.x) * c.fz + (a.z - c.z) * c.fx, sgn = la >= 0 ? 1 : -1; a.ai.sx = -c.fz * sgn; a.ai.sz = c.fx * sgn; a.ai.side = 1.4; }
@@ -100,12 +107,49 @@ function makeGame(map, W, opts) {
       if (target) c.wait = 0;
       if (target) for (const n of G.npcs) if (blocks(n)) { target = 0; break; }
       for (const o of G.cars) if (o !== c && o.dir === c.dir) { const d = (o.s - c.s) * c.dir; if (d > 0 && d < 12) target = Math.min(target, Math.max(0, (d - 7.5) * 2)); }
-      c.spd += clamp(target - c.spd, -10 * dt, 3.5 * dt); c.s += c.dir * c.spd * dt;
+      c.spd += clamp(target - c.spd, -6 * dt, 3.5 * dt); c.s += c.dir * c.spd * dt; // freia como carro de verdade: quem entra na frente em cima da hora é atropelado
       if (c.s > ALEN) c.s -= ALEN; if (c.s < 0) c.s += ALEN;
-      carPose(c); W.dyn.push({ x: c.x, z: c.z, fx: c.fx, fz: c.fz, hl: 2.3, hw: 1.0, top: c.van ? 2.0 : 1.5 });
+      carPose(c); W.dyn.push({ x: c.x, z: c.z, fx: c.fx, fz: c.fz, hl: 2.3, hw: 1.0, top: c.van ? 2.0 : 1.5 }); runOver(c);
     }
+    updatePolice(dt);
   }
+  const CAR_KILLER = { id: -1, team: -1, name: 'Carro', kills: 0, x: 0, y: 0, z: 0 };
+  function runOver(c) { if (c.spd < 2.5) return; for (const v of [...G.actors, ...G.npcs]) { if (!v.alive) continue; const dx = v.x - c.x, dz = v.z - c.z, al = dx * c.fx + dz * c.fz, la = -dx * c.fz + dz * c.fx; if (Math.abs(al) < 2.6 && Math.abs(la) < 1.3 && v.y < 1.6) { const inv = v.invuln; v.invuln = 0; CAR_KILLER.x = c.x; CAR_KILLER.z = c.z; damage(v, 999, CAR_KILLER, false, 'car'); if (!v.npc) v.invuln = inv; emit({ type: 'runover', v: v.id, x: v.x, z: v.z }); } } }
   G.updateCars = updateCars;
+  // ---------- POLÍCIA: de tempos em tempos escolhe um time e faz uma operação na favela dele ----------
+  // As viaturas descem a Avenida das Américas, pegam a passagem de baixo e entram na favela; os policiais desembarcam e tentam tomar as bases.
+  const PC = CONFIG.police, PZ = G.police, between = r => r[0] + rnd() * (r[1] - r[0]); PZ.next = between(PC.first);
+  const junction = (() => { let bi = 0, bd = 1e9; BOTTOM_ROAD.forEach((p, i) => { const d = Math.abs(p[0] - aveX(p[1])); if (d < bd) { bd = d; bi = i; } }); return bi; })();
+  function policeRoute(team) { const pts = []; for (const p of AVE_PTS) { if (p[1] < BOTTOM_ROAD[junction][1] + 4) break; pts.push([p[0] - LANE_X * 0.9, p[1]]); } pts.push([aveX(BOTTOM_ROAD[junction][1] + 4) - 1, BOTTOM_ROAD[junction][1] + 4]);
+    if (team === 0) for (let i = junction; i >= 0; i--) pts.push(BOTTOM_ROAD[i]); else for (let i = junction; i < BOTTOM_ROAD.length; i++) pts.push(BOTTOM_ROAD[i]);
+    const L = [0]; for (let i = 1; i < pts.length; i++) L.push(L[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); return { pts, L, len: L[L.length - 1] }; }
+  const routeAt = (R, s2) => { let i = 1; while (i < R.L.length - 1 && R.L[i] < s2) i++; const a = R.pts[i - 1], b = R.pts[i], seg = R.L[i] - R.L[i - 1] || 1, t = clamp((s2 - R.L[i - 1]) / seg, 0, 1); return { x: a[0] + (b[0] - a[0]) * t, z: a[1] + (b[1] - a[1]) * t, fx: (b[0] - a[0]) / seg, fz: (b[1] - a[1]) / seg }; };
+  G.policeTargets = team => G.bases.filter(b => team === 0 ? b.id !== 'C' : b.id !== 'B'); // favela do Azul: B e A; favela do Vermelho: C e A
+  function startOperation() {
+    const lead = G.score[0] === G.score[1] ? (rnd() < 0.5 ? 0 : 1) : G.score[0] > G.score[1] ? 0 : 1, team = rnd() < 0.6 ? lead : 1 - lead; // sorteio, com leve preferência por quem está na frente
+    const R = policeRoute(team); PZ.phase = 'chegando'; PZ.team = team; PZ.endT = G.t + between(PC.duration) + 30; PZ.ops++; PZ.cars = [];
+    for (let k = 0; k < PC.cars; k++) { const car = { id: k, R, s: -k * 14, stop: R.len - 2 - k * 8.5, spd: 0, x: 0, z: 0, fx: 0, fz: -1, parked: false, crew: [] }; Object.assign(car, routeAt(R, 0)); PZ.cars.push(car); }
+    emit({ type: 'police', phase: 'start', team, n: PC.cars * PC.perCar });
+  }
+  function disembark(car) { car.parked = true;
+    for (let k = 0; k < PC.perCar; k++) { const side = k % 2 ? 1 : -1, back = (k >> 1) * 1.6 - 1.6, x = car.x - car.fz * side * 2.2 - car.fx * back, z = car.z + car.fx * side * 2.2 - car.fz * back, c = W.nearestOK(x, z, 5); if (c < 0) continue;
+      const a = mk(2, k, 'bot', POLICE_NAMES[(PZ.ops * 3 + car.id * PC.perCar + k) % POLICE_NAMES.length]); a.isPolice = true; G.actors.push(a);
+      a.x = W.cellX(c); a.z = W.cellZ(c); a.y = map.H[c]; a.hp = PC.hp; a.alive = true; a.invuln = 1; a.ammo = loadout(); a.cur = 'rifle'; a.gren = 1; a.yaw = Math.atan2(car.fx, car.fz); a.respawnT = -9; car.crew.push(a); }
+    emit({ type: 'roster' }); if (!PZ.cars.some(c => c !== car && c.parked)) emit({ type: 'police', phase: 'incursao', team: PZ.team });
+  }
+  function endOperation(result) { G.actors = G.actors.filter(a => !a.isPolice); for (const b of G.bases) if (b.owner === 2) { b.owner = -1; b.prog = 0; b.polProg = 0; emit({ type: 'base', base: b.id, team: -1, from: 2 }); }
+    emit({ type: 'police', phase: 'end', team: PZ.team, result }); emit({ type: 'roster' }); PZ.phase = 'idle'; PZ.cars = []; PZ.next = G.t + between(PC.every); }
+  function updatePolice(dt) {
+    if (PZ.phase === 'idle') { if (G.t >= PZ.next && !G.over && !opts.noPolice) startOperation(); return; }
+    for (const car of PZ.cars) { if (car.parked) { W.dyn.push({ x: car.x, z: car.z, fx: car.fx, fz: car.fz, hl: 2.4, hw: 1.05, top: 1.7 }); continue; }
+      let target = car.stop - car.s < 14 ? Math.max(1.5, (car.stop - car.s) * 0.8) : PC.speed;
+      for (const v of [...G.actors, ...G.npcs]) { if (!v.alive || v.isPolice) continue; const dx = v.x - car.x, dz = v.z - car.z, al = dx * car.fx + dz * car.fz, la = -dx * car.fz + dz * car.fx; if (al > 0 && al < 12 && Math.abs(la) < 2.3) { target = Math.min(target, Math.max(0, (al - 4) * 1.2)); } } car.spd += clamp(target - car.spd, -7 * dt, 4 * dt); car.s += car.spd * dt;
+      if (car.s >= 0) { Object.assign(car, routeAt(car.R, car.s)); W.dyn.push({ x: car.x, z: car.z, fx: car.fx, fz: car.fz, hl: 2.4, hw: 1.05, top: 1.7 }); runOver(car); }
+      if (car.s >= car.stop) disembark(car); }
+    if (PZ.phase === 'chegando' && PZ.cars.every(c => c.parked)) PZ.phase = 'incursao';
+    if (PZ.phase === 'incursao') { const alive = G.actors.filter(a => a.isPolice && a.alive).length; if (!alive) endOperation('derrotada'); else if (G.t >= PZ.endT) endOperation('retirada'); }
+  }
+  G.startOperation = startOperation; G.endOperation = endOperation;
   const pathQ = [];
   // ---------- utilidades ----------
   const eyeH = a => a.crouch ? 1.15 : 1.6, bodyH = a => a.npc ? 1.72 : a.crouch ? 1.3 : 1.78;
@@ -159,18 +203,18 @@ function makeGame(map, W, opts) {
     if (w.mag === 0 && w.res === 0) emit({ type: 'empty', id: a.id, w: wn });
     return true;
   }
-  function damage(v, amt, by, head) {
+  function damage(v, amt, by, head, cause) {
     if (!v.alive) return;
     if (v.npc) { v.hp -= amt; v.hurtT = 0.12; emit({ type: 'hit', v: v.id, by: by.id, head, npc: true });
       if (v.hp <= 0) { v.hp = 0; v.alive = false; v.deathT = 0; v.respawnT = CONFIG.npcRespawn; v.path = null;
-        if (!v.penalized) { v.penalized = true; const tm = by.team; G.score[tm] = Math.max(0, G.score[tm] - CONFIG.npcPenalty); by.npcKills = (by.npcKills || 0) + 1; emit({ type: 'npc', team: tm, by: by.id, v: v.id }); } }
+        if (!v.penalized) { v.penalized = true; const tm = by.team; if (tm === 0 || tm === 1) G.score[tm] = Math.max(0, G.score[tm] - CONFIG.npcPenalty); by.npcKills = (by.npcKills || 0) + 1; emit({ type: 'npc', team: tm, by: by.id, v: v.id }); } }
       return; }
     if (v.invuln > 0) return;
     v.hp -= amt; v.hurtT = 0.12; v.lastHurt = G.t; v.lastBy = by;
     if (v.ai && !v.ai.target) v.ai.heard = { x: by.x, z: by.z, y: by.y, t: G.t };
     emit({ type: 'hit', v: v.id, by: by.id, head });
-    if (v.hp <= 0) { v.hp = 0; v.alive = false; v.deaths++; v.respawnT = CONFIG.respawn; v.deathT = 0; by.kills++; v.killer = by; v.refillT = 0;
-      G.feed.unshift({ k: by.id, v: v.id, head, t: G.t }); if (G.feed.length > 5) G.feed.pop(); emit({ type: 'kill', v: v.id, by: by.id, head }); }
+    if (v.hp <= 0) { v.hp = 0; v.alive = false; v.deaths++; v.respawnT = v.isPolice ? -9 : CONFIG.respawn; v.deathT = 0; v.killer = by; v.refillT = 0;
+      if (by.kills != null) by.kills++; G.feed.unshift({ k: by.id, v: v.id, head, t: G.t, cause }); if (G.feed.length > 5) G.feed.pop(); emit({ type: 'kill', v: v.id, by: by.id, head, cause }); }
   }
   // recarga: só transfere da reserva o que falta no carregador (nunca cria munição)
   function startReload(a) { const w = a.ammo[a.cur], wc = W_(a.cur); if (!a.alive || a.reloadT > 0 || a.swapT > 0 || w.mag >= wc.mag || w.res <= 0) return false; a.reloadT = wc.reload; emit({ type: 'reload', id: a.id, w: a.cur }); return true; }
@@ -223,16 +267,22 @@ function makeGame(map, W, opts) {
   // ---------- dominação ----------
   function updateBases(dt) {
     for (const b of G.bases) {
-      b.inside = [0, 0];
+      b.inside = [0, 0, 0];
       for (const a of G.actors) if (a.alive && Math.hypot(a.x - b.x, a.z - b.z) <= b.r && Math.abs(a.y - b.h) < 2.2) b.inside[a.team]++;
-      const solo = b.inside[0] && !b.inside[1] ? 0 : b.inside[1] && !b.inside[0] ? 1 : -1, before = b.owner, prevState = b.state;
-      const rate = 1 / CONFIG.capTime;
-      if (b.inside[0] && b.inside[1]) b.state = 'contestada';
-      else if (solo >= 0) { const target = solo === 0 ? -1 : 1, n = b.inside[solo]; if (b.prog !== target) { b.prog += Math.sign(target - b.prog) * rate * dt * Math.min(1.5, 1 + (n - 1) * 0.25); if ((target - b.prog) * Math.sign(target) < 0) b.prog = target; b.state = 'capturando'; b.capTeam = solo; } else b.state = b.owner >= 0 ? 'dominada' : 'neutra'; }
-      else { const rest = b.owner === 0 ? -1 : b.owner === 1 ? 1 : 0; if (b.prog !== rest) { const s = Math.sign(rest - b.prog), np = b.prog + s * rate * 0.5 * dt; b.prog = (rest - np) * s < 0 ? rest : np; } b.state = b.owner >= 0 ? 'dominada' : 'neutra'; }
-      // dono muda só quando a barra chega ao extremo; ao cruzar o centro a base fica neutra
-      if (b.owner === 0 && b.prog > 0) b.owner = -1; if (b.owner === 1 && b.prog < 0) b.owner = -1;
-      if (b.prog <= -1) { b.prog = -1; b.owner = 0; } if (b.prog >= 1) { b.prog = 1; b.owner = 1; }
+      const before = b.owner, prevState = b.state, rate = 1 / CONFIG.capTime, pol = b.inside[2], t0 = b.inside[0], t1 = b.inside[1];
+      if (pol && !t0 && !t1) { // polícia sozinha na base: ocupa em capTime (a barra volta ao meio e a base fica com a polícia)
+        if (b.owner !== 2) { b.polProg = (b.polProg || 0) + rate * dt * Math.min(1.5, 1 + (pol - 1) * 0.25); b.state = 'capturando'; b.capTeam = 2; b.prog *= Math.max(0, 1 - rate * dt * 2); if (b.polProg >= 1) { b.polProg = 0; b.prog = 0; b.owner = 2; } }
+        else b.state = 'ocupada';
+      } else {
+        if (!pol) b.polProg = Math.max(0, (b.polProg || 0) - rate * dt * 0.5);
+        const solo = t0 && !t1 && !pol ? 0 : t1 && !t0 && !pol ? 1 : -1, contested = (t0 && t1) || (pol && (t0 || t1));
+        if (contested) b.state = 'contestada';
+        else if (solo >= 0) { const target = solo === 0 ? -1 : 1, n = b.inside[solo]; if (b.prog !== target) { b.prog += Math.sign(target - b.prog) * rate * dt * Math.min(1.5, 1 + (n - 1) * 0.25); if ((target - b.prog) * Math.sign(target) < 0) b.prog = target; b.state = 'capturando'; b.capTeam = solo; } else b.state = b.owner === solo ? 'dominada' : 'capturando'; }
+        else { const rest = b.owner === 0 ? -1 : b.owner === 1 ? 1 : 0; if (b.prog !== rest) { const sg = Math.sign(rest - b.prog), np = b.prog + sg * rate * 0.5 * dt; b.prog = (rest - np) * sg < 0 ? rest : np; } b.state = b.owner === 2 ? 'ocupada' : b.owner >= 0 ? 'dominada' : 'neutra'; }
+        // dono muda só quando a barra chega ao extremo; ao cruzar o centro a base fica neutra
+        if (b.owner === 0 && b.prog > 0) b.owner = -1; if (b.owner === 1 && b.prog < 0) b.owner = -1; if (b.owner === 2 && Math.abs(b.prog) > 0.5) b.owner = -1;
+        if (b.prog <= -1) { b.prog = -1; b.owner = 0; } if (b.prog >= 1) { b.prog = 1; b.owner = 1; }
+      }
       if (before !== b.owner) { emit({ type: 'base', base: b.id, team: b.owner, from: before });
         if (b.owner >= 0) for (const a of G.actors) if (a.alive && a.team === b.owner && Math.hypot(a.x - b.x, a.z - b.z) <= b.r + 0.5) a.caps = (a.caps || 0) + 1; }
       if (b.state !== prevState && b.state === 'contestada') emit({ type: 'contest', base: b.id });
@@ -249,6 +299,7 @@ function makeGame(map, W, opts) {
   }
   function lowAmmo(a) { return totalAmmo(a, 'rifle') < 20 && totalAmmo(a, 'pistol') < 8; }
   function pickGoal(a) {
+    if (a.isPolice) { const tg = G.policeTargets(PZ.team), todo = tg.filter(b => b.owner !== 2), b = (todo.length ? todo : tg).sort((p, q) => Math.hypot(p.x - a.x, p.z - a.z) - Math.hypot(q.x - a.x, q.z - a.z))[rnd() < 0.75 ? 0 : todo.length > 1 ? 1 : 0]; a.ai.mode = 'base'; return b.cell; }
     if (lowAmmo(a)) { a.ai.mode = 'refill'; return G.stationCell[a.team]; }
     a.ai.mode = 'roam';
     const enemySide = a.team === 0 ? 1 : -1; let tot = 0;
@@ -260,7 +311,7 @@ function makeGame(map, W, opts) {
   }
   function requestPath(a, goal) { a.ai.goal = goal; a.ai.wantPath = true; if (!pathQ.includes(a)) pathQ.push(a); }
   function botThink(a, dt) {
-    const ai = a.ai, D = G.diff;
+    const ai = a.ai, D = a.isPolice ? DIFF_FPS.dificil : G.diff;
     // arma: troca para a pistola quando o fuzil acaba; recarrega usando a reserva
     if (a.ammo[a.cur].mag === 0 && a.reloadT <= 0 && a.swapT <= 0) { if (a.ammo[a.cur].res > 0) startReload(a); else { const other = a.cur === 'rifle' ? 'pistol' : 'rifle'; if (totalAmmo(a, other) > 0) swap(a, other); } }
     if (a.cur === 'pistol' && totalAmmo(a, 'rifle') > 0 && a.reloadT <= 0 && !ai.target) swap(a, 'rifle');
@@ -313,6 +364,9 @@ function makeGame(map, W, opts) {
       }
     }
     const len = Math.hypot(mvx, mvz); if (len > 1) { mvx /= len; mvz /= len; }
+    // atravessar a avenida: espera o carro passar (quem entra na frente de carro em movimento é atropelado)
+    if (len > 0.05 && !(ai.side > 0)) { const ahead = Math.abs(polySide(a.x + mvx * 1.2, a.z + mvz * 1.2, AVE_PTS)), here = Math.abs(polySide(a.x, a.z, AVE_PTS));
+      if (ahead < AVE_HW + 0.3 && here >= AVE_HW - 0.2) for (const c of [...G.cars, ...PZ.cars]) { if (c.spd < 1) continue; const dx = a.x - c.x, dz = a.z - c.z, al = dx * c.fx + dz * c.fz; if (al > -2 && al < 22 && Math.abs(-dx * c.fz + dz * c.fx) < 4.5) { mvx = 0; mvz = 0; break; } } }
     // desvio de carros parados: se bateu num carro, dá alguns passos para o lado antes de seguir
     if (ai.side > 0) { ai.side -= dt; mvx = ai.sx; mvz = ai.sz; }
     const wall = W.move(a, mvx * speed, mvz * speed, dt); a.spd = len > 0.05 ? speed : 0;
@@ -409,15 +463,16 @@ function makeGame(map, W, opts) {
     } else a.trig = false;
   }
   G.sectorAt = (x, z) => {
-    for (const [k, nm] of [['azul', 'Base Azul — Alto da Mata'], ['verm', 'Base Vermelha — Morro do Cruzeiro'], ['A', 'Base A — Clareira da Mata'], ['praca', 'Praça Central (Base B)'], ['C', 'Base C — Canal']]) if (ellR(x, z, CLEAR[k]) <= 1.15) return nm;
-    if (Math.abs(x - QUADRA.x) <= QUADRA.hx + 3 && z >= QUADRA.z - QUADRA.hz - 3 && z <= STAGE.z + 3) return 'Quadra do Baile';
+    for (const [k, nm] of [['azul', 'Base Azul — Alto da Mata'], ['verm', 'Base Vermelha — Morro do Cruzeiro'], ['A', 'Base A — Coração da Mata'], ['B', 'Base B — Largo da Serra'], ['praca', 'Praça Central'], ['C', 'Pracinha do Canal']]) if (ellR(x, z, CLEAR[k]) <= 1.15) return nm;
+    if (Math.abs(x - QUADRA.x) <= QUADRA.hx + 3 && z >= QUADRA.z - QUADRA.hz - 3 && z <= STAGE.z + 3) return 'Quadra do Baile (Base C)';
     if (polyDist(x, z, BOTTOM_ROAD) <= 4) return 'Passagem de baixo';
     const dA = Math.abs(polySide(x, z, AVE_PTS)), dC = Math.abs(polySide(x, z, CANAL_PTS));
     if (dA <= AVE_HW + SIDEW + 0.5) return 'Avenida das Américas';
     if (dC <= CAN_HW + CAN_WALL + BANK_W + 0.5) return 'Canal / Valão';
-    if (escAt(x, z)) return z > 66 && x < 36 ? 'Alto do Escadão' : 'Escadão Principal';
-    if (inPoly(x, z, POLY_LEFT)) { if (z > 78) return 'Alto do Escadão'; if (x < 30) return 'Vila da Serra'; if (z < 22) return 'Beco da Mina'; return 'Favela do Escadão'; }
-    if (inPoly(x, z, POLY_RIGHT)) { if (z > 75 && x < 195) return 'Vila do Valão'; if (x > 228 && z > 45) return 'Vila Nova'; if (z < 50 && x > 205) return 'Lajes do Topo'; return 'Favela do Valão'; }
+    if (escAt(x, z)) return z > 66 * SC && x < 36 * SC ? 'Alto do Escadão' : 'Escadão Principal';
+    const xs = x / SC, zs = z / SC;
+    if (inPoly(x, z, POLY_LEFT)) { if (zs > 78) return 'Alto do Escadão'; if (xs < 30) return 'Vila da Serra'; if (zs < 22) return 'Beco da Mina'; return 'Favela do Escadão'; }
+    if (inPoly(x, z, POLY_RIGHT)) { if (zs > 75 && xs < 195) return 'Vila do Valão'; if (xs > 232) return 'Vila Nova'; if (zs < 40 && xs > 205) return 'Lajes do Topo'; return 'Favela do Valão'; }
     return 'Mata Central'; };
   Object.assign(G, { throwGrenade, spawn, update, fire, damage, eyeH, bodyH, dirOf, canSee, startReload, finishReload, swap, useStation, nearStation, needsRefill, actions, totalAmmo, spawnNpc, nearestMain, hitActors });
   G.byId = id => G.actors.find(a => a.id === id) || G.npcs.find(n => n.id === id);
