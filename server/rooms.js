@@ -8,6 +8,7 @@ const TICK = 1 / 30;            // simulação a 30 Hz
 const SNAP_EVERY = 2;           // fotografia do estado a cada 2 passos (15 Hz)
 const LOBBY_GRACE = 20000;      // ms para reconectar no lobby
 const GAME_GRACE = 45000;       // ms para reconectar durante a partida
+const VOICE_RANGE = 30; // metros: além disso a voz não é enviada
 const MAX_TEAM = 5;
 const MAP_SEED = 20261105;
 
@@ -43,18 +44,19 @@ class RoomManager {
     on('rooms:unsub', () => s.leave('list'));
     on('room:create', (d, cb) => this.create(s, me, d || {}, cb || (() => {})));
     on('room:join', (d, cb) => this.join(s, me, d || {}, cb || (() => {})));
-    on('room:info', (d, cb) => { const r = this.rooms.get(clean(d && d.id, 8).toUpperCase()); if (cb) cb(r ? { ok: true, id: r.id, name: r.name, priv: !!r.pass, state: r.state, count: this.count(r) } : { error: 'Sala não encontrada.' }); });
+    on('room:info', (d, cb) => { const r = this.rooms.get(clean(d && d.id, 8).toUpperCase()); if (cb) cb(r ? { ok: true, id: r.id, name: r.name, priv: !!r.pass, state: r.state, count: this.count(r), teams: this.teamsOf(r) } : { error: 'Sala não encontrada.' }); });
     on('room:leave', () => this.leave(me, true));
-    on('lobby:team', d => this.withRoom(me, (r, p) => { const t = d && d.team === 1 ? 1 : 0; if (r.state !== 'lobby' || t === p.team) return; if (this.teamCount(r, t) >= MAX_TEAM) return; p.team = t; p.ready = false; this.clampBots(r); this.sendLobby(r); this.dirty(); }));
+    on('lobby:team', d => this.withRoom(me, (r, p) => { const t = d && d.team === 1 ? 1 : 0; if (r.state !== 'lobby' || t === p.team) return; if (this.teamCount(r, t) >= MAX_TEAM) { if (r.bots[t] > 0) r.bots[t]--; else return; } p.team = t; p.ready = false; this.clampBots(r); this.sendLobby(r); this.dirty(); }));
     on('lobby:ready', d => this.withRoom(me, (r, p) => { if (r.state !== 'lobby') return; p.ready = !!(d && d.ready); this.sendLobby(r); }));
     on('lobby:bots', d => this.withRoom(me, (r, p) => { if (r.host !== p.key || r.state !== 'lobby') return; const t = d && d.team === 1 ? 1 : 0; r.bots[t] = num(d && d.n, 0, MAX_TEAM, 0); this.clampBots(r); this.sendLobby(r); this.dirty(); }));
     on('lobby:diff', d => this.withRoom(me, (r, p) => { if (r.host !== p.key || r.state !== 'lobby') return; if (S.DIFF_FPS[d && d.diff]) r.diff = d.diff; this.sendLobby(r); }));
     on('lobby:start', (d, cb) => this.withRoom(me, (r, p) => { if (r.host !== p.key) return cb && cb({ error: 'Só o anfitrião pode iniciar.' }); if (r.state !== 'lobby') return cb && cb({ error: 'A partida já começou.' }); this.start(r); cb && cb({ ok: true }); }));
     on('game:input', d => this.input(me, d));
-    // ---- chat de voz (WebRTC ponto a ponto); o áudio não passa pelo servidor ----
-    on('voice:signal', d => { if (!d || typeof d !== 'object') return; const r = me.room && this.rooms.get(me.room); if (!r || r.state !== 'playing') return; const from = r.players.get(me.key); if (!from || !from.actor) return;
-      const nowT = this.now(); if (!me.vsT || nowT - me.vsT > 60000) { me.vsT = nowT; me.vs = 0; } if (++me.vs > 600) return; // limite: 600 mensagens por minuto
-      for (const p of r.players.values()) if (p.actor && p.actor.id === d.to && p.connected) { const sk = this.socks.get(p.sid); if (sk) sk.s.emit('voice:signal', { from: from.actor.id, data: d.data }); } });
+    // ---- chat de voz: o áudio (trechos pequenos, comprimidos) passa pelo servidor, que só repassa a quem está PERTO de quem fala.
+    // Funciona em qualquer rede em que o jogo funciona (não depende de conexão direta entre os jogadores).
+    on('voice:data', d => { if (typeof d !== 'string' || d.length > 6000) return; const r = me.room && this.rooms.get(me.room); if (!r || r.state !== 'playing') return; const from = r.players.get(me.key); if (!from || !from.actor) return;
+      const nowT = this.now(); if (!me.vT || nowT - me.vT > 1000) { me.vT = nowT; me.vN = 0; } if (++me.vN > 40) return; // no máximo 40 trechos por segundo
+      const a = from.actor; for (const p of r.players.values()) { if (p === from || !p.actor || !p.connected) continue; const b = p.actor; if (Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) > VOICE_RANGE) continue; const sk = this.socks.get(p.sid); if (sk) sk.s.emit('voice:data', { id: a.id, d }); } });
     on('voice:state', d => { const r = me.room && this.rooms.get(me.room); if (!r) return; const p = r.players.get(me.key); if (!p || !p.actor) return; p.mic = !!(d && d.on); this.io.to('room:' + r.id).emit('voice:state', { id: p.actor.id, on: p.mic }); });
     on('game:back', () => this.withRoom(me, (r, p) => { if (r.state === 'ended' && r.host === p.key) this.toLobby(r); }));
     on('disconnect', () => { this.socks.delete(s.id); const r = me.room && this.rooms.get(me.room); if (!r) return; const p = r.players.get(me.key); if (p && p.sid === s.id) { p.connected = false; p.lostAt = this.now(); if (p.actor) p.actor.in = Object.assign(p.actor.in, { mx: 0, mz: 0, fire: false, use: false }); this.sendLobby(r); this.dirty(); } });
@@ -78,15 +80,26 @@ class RoomManager {
     const r = this.rooms.get(clean(d.id, 8).toUpperCase()); if (!r) return cb({ error: 'Sala não encontrada.' });
     if (r.players.has(me.key)) { const p = r.players.get(me.key); p.sid = s.id; p.connected = true; me.room = r.id; s.join('room:' + r.id); this.sendLobby(r); if (r.state === 'playing') this.sendStart(r, p); return cb({ ok: true, id: r.id }); }
     if (r.pass && hashPass(clean(d.pass, 24), r.salt) !== r.pass) return cb({ error: 'Senha incorreta.', needPass: true });
-    // abre vaga tirando um bot, se for preciso
-    const free = t => this.teamCount(r, t) < MAX_TEAM || r.bots[t] > 0;
-    let team = this.teamCount(r, 0) <= this.teamCount(r, 1) ? 0 : 1; if (!free(team)) team = 1 - team;
-    if (!free(team)) return cb({ error: 'Sala cheia (5 contra 5).' });
-    if (this.teamCount(r, team) >= MAX_TEAM) r.bots[team]--;
-    this.leave(me, true); this.addPlayer(s, me, r, team);
-    if (r.state === 'playing') { const p = r.players.get(me.key); this.addActor(r, p); this.sendStart(r, p); }
+    // o jogador escolhe o time; se o time estiver completo com bots, um bot sai e ele entra no lugar
+    const want = d.team === 0 || d.team === 1 ? d.team : null;
+    if (r.state === 'playing' && r.game) {
+      const G = r.game, botIn = t => G.actors.some(a => a.isBot && a.team === t), count = t => G.actors.filter(a => a.team === t).length, free = t => botIn(t) || count(t) < MAX_TEAM;
+      let team = want != null ? want : (free(0) && (!free(1) || count(0) - (botIn(0) ? 1 : 0) <= count(1) - (botIn(1) ? 1 : 0)) ? 0 : 1);
+      if (!free(team)) return cb({ error: want != null ? 'O time ' + S.TEAM[team].name + ' está completo, sem bots para substituir. Escolha o outro time.' : 'Sala cheia (5 contra 5).', teamFull: true });
+      this.leave(me, true); this.addPlayer(s, me, r, team); const p = r.players.get(me.key);
+      const taken = G.takeOver(team, p.name, p.key); if (taken) { p.actor = taken; p.lastPos = null; r.bots[team] = Math.max(0, r.bots[team] - 1); } else this.addActor(r, p);
+      this.sendStart(r, p); this.io.to('room:' + r.id).emit('game:roster', this.roster(r)); this.io.to('room:' + r.id).emit('game:notice', { text: p.name + ' entrou no time ' + S.TEAM[team].name + (taken ? ' no lugar de um bot' : '') });
+    } else {
+      const free = t => this.teamCount(r, t) < MAX_TEAM || r.bots[t] > 0;
+      let team = want != null ? want : (this.teamCount(r, 0) <= this.teamCount(r, 1) ? 0 : 1); if (want == null && !free(team)) team = 1 - team;
+      if (!free(team)) return cb({ error: want != null ? 'O time ' + S.TEAM[team].name + ' está completo, sem bots para substituir. Escolha o outro time.' : 'Sala cheia (5 contra 5).', teamFull: true });
+      if (this.teamCount(r, team) >= MAX_TEAM) r.bots[team]--;
+      this.leave(me, true); this.addPlayer(s, me, r, team);
+    }
     this.sendLobby(r); this.dirty(); cb({ ok: true, id: r.id });
   }
+  // resumo da sala para a tela de escolha de time (antes de entrar)
+  teamsOf(r) { return [0, 1].map(t => { let h = 0; for (const p of r.players.values()) if (p.team === t) h++; const b = r.state === 'playing' && r.game ? r.game.actors.filter(a => a.isBot && a.team === t).length : r.bots[t]; return { humans: h, bots: b }; }); }
   addPlayer(s, me, r, team) { const t = team != null ? team : (this.teamCount(r, 0) <= this.teamCount(r, 1) ? 0 : 1); r.players.set(me.key, { key: me.key, name: me.name, team: t, ready: false, sid: s.id, connected: true, lostAt: 0, actor: null }); me.room = r.id; s.join('room:' + r.id); }
   leave(me, voluntary) {
     const r = me.room && this.rooms.get(me.room); me.room = null; if (!r) return;
@@ -95,7 +108,7 @@ class RoomManager {
   }
   removePlayer(r, p) {
     r.players.delete(p.key);
-    if (p.actor && r.game) { const G = r.game; G.actors = G.actors.filter(a => a !== p.actor); }
+    if (p.actor && r.game && r.state === 'playing') { r.game.toBot(p.actor); r.bots[p.team] = Math.min(MAX_TEAM, r.bots[p.team] + 1); this.io.to('room:' + r.id).emit('game:roster', this.roster(r)); }
     if (!r.players.size) { this.closeRoom(r); return; }
     if (r.host === p.key) { const next = [...r.players.values()].find(q => q.connected) || [...r.players.values()][0]; r.host = next.key; }
     this.clampBots(r); this.sendLobby(r); this.dirty();
@@ -116,7 +129,7 @@ class RoomManager {
     this.sendLobby(r); this.dirty();
   }
   addActor(r, p) { const G = r.game; const a = G.mk(p.team, G.actors.length, 'remote', p.name, p.key); G.actors.push(a); p.actor = a; p.lastPos = null; }
-  roster(r) { return r.game.actors.map(a => ({ id: a.id, name: a.name, team: a.team, bot: a.isBot })); }
+  roster(r) { return r.game.actors.map(a => ({ id: a.id, name: a.name, team: a.team, bot: a.isBot, police: !!a.isPolice })); }
   sendStart(r, p) { const sk = this.socks.get(p.sid); if (!sk || !r.game || !p.actor) return; sk.s.emit('game:start', { seed: MAP_SEED, myId: p.actor.id, roster: this.roster(r), npcs: r.game.npcs.map(n => ({ id: n.id, name: n.name, shirt: n.shirt })), cars: r.game.cars.map(c => ({ id: c.id, dir: c.dir, col: c.col, van: c.van, s: c.s })), cfg: S.CONFIG, dayT: r.game.dayT }); }
   // entrada do jogador: o servidor valida movimento e aplica ações com as mesmas regras do jogo
   input(me, d) {
@@ -152,9 +165,11 @@ class RoomManager {
     const actors = G.actors.map(a => [a.id, q(a.x), q(a.y), q(a.z), Math.round(a.yaw * 1000) / 1000, Math.round(a.pitch * 1000) / 1000, Math.round(a.hp), (a.alive ? 1 : 0) | (a.crouch ? 2 : 0) | (a.cur === 'pistol' ? 4 : 0) | (a.reloadT > 0 ? 8 : 0) | (a.invuln > 0 ? 16 : 0) | (a.hurtT > 0 ? 32 : 0), q(a.spd), a.kills, a.deaths]);
     const npcs = G.npcs.map(n => [n.id, q(n.x), q(n.y), q(n.z), Math.round(n.yaw * 1000) / 1000, n.alive ? 1 : 0, q(n.spd), q(n.deathT)]);
     const bases = G.bases.map(b => [b.owner, Math.round(b.prog * 1000) / 1000, b.state, b.inside[0], b.inside[1]]);
+    if (G.events.some(e => e.type === 'roster')) this.io.to('room:' + r.id).emit('game:roster', this.roster(r));
     const ev = G.events.map(e => { const o = {}; for (const k in e) o[k] = typeof e[k] === 'number' && !Number.isInteger(e[k]) ? Math.round(e[k] * 100) / 100 : e[k]; return o; }); G.events.length = 0;
+    const PZ = G.police, pol = { ph: PZ.phase, tm: PZ.team, left: PZ.phase === 'idle' ? 0 : Math.max(0, Math.round(PZ.endT - G.t)), c: PZ.cars.filter(c => c.s >= 0).map(c => [q(c.x), q(c.z), Math.round(c.fx * 1000) / 1000, Math.round(c.fz * 1000) / 1000, c.parked ? 1 : 0]) };
     const cars = G.cars.map(c => [q(c.s), q(c.spd)]), gr = G.grenades.map(g => [g.id, q(g.x), q(g.y), q(g.z)]);
-    const base = { t: Math.round(G.t * 100) / 100, dn: Math.round(G.dayT * 1e5) / 1e5, bl: [G.baile.on ? 1 : 0, Math.round(G.baile.t0 * 100) / 100], gr, a: actors, n: npcs, c: cars, b: bases, s: [Math.round(G.score[0] * 100) / 100, Math.round(G.score[1] * 100) / 100], tl: Math.round(G.timeLeft), ev };
+    const base = { t: Math.round(G.t * 100) / 100, pol, dn: Math.round(G.dayT * 1e5) / 1e5, bl: [G.baile.on ? 1 : 0, Math.round(G.baile.t0 * 100) / 100], gr, a: actors, n: npcs, c: cars, b: bases, s: [Math.round(G.score[0] * 100) / 100, Math.round(G.score[1] * 100) / 100], tl: Math.round(G.timeLeft), ev };
     for (const p of r.players.values()) { const sk = this.socks.get(p.sid); if (!sk || !p.connected || !p.actor) continue; const a = p.actor;
       const me = { id: a.id, hp: Math.round(a.hp), alive: a.alive, rt: Math.max(0, Math.round(a.respawnT * 10) / 10), cur: a.cur, am: [a.ammo.rifle.mag, a.ammo.rifle.res, a.ammo.pistol.mag, a.ammo.pistol.res], rl: Math.round(a.reloadT * 100) / 100, sw: Math.round(a.swapT * 100) / 100, rf: Math.round(a.refillT * 100) / 100, rfc: Math.round(a.refillCd * 10) / 10, near: G.nearStation(a), desk: G.nearDesk(a) ? 1 : 0, inv: a.invuln > 0, gn: a.gren || 0 };
       const justSpawned = a.alive && !p.wasAlive; p.wasAlive = a.alive;
