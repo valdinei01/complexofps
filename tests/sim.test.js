@@ -3,7 +3,7 @@ const S = require('../shared/sim.js');
 const { test, eq, ok, summary } = require('./mini.js');
 
 const map = S.buildMap(20261105), W = S.makeWorld(map);
-const freshGame = (o) => S.makeGame(map, W, Object.assign({ humans: [{ key: 'a', name: 'Ana', team: 0 }, { key: 'b', name: 'Beto', team: 1 }], bots: { 0: 0, 1: 0 }, local: true }, o || {}));
+const freshGame = (o) => S.makeGame(map, W, Object.assign({ humans: [{ key: 'a', name: 'Ana', team: 0 }, { key: 'b', name: 'Beto', team: 1 }], bots: { 0: 0, 1: 0 }, local: true, noPolice: true }, o || {}));
 const step = (G, sec, fn) => { const n = Math.round(sec * 30); for (let k = 0; k < n; k++) { if (fn) fn(k); G.update(1 / 30); } };
 const placeAt = (a, c) => { a.x = W.cellX(c); a.z = W.cellZ(c); a.y = map.H[c]; a.alive = true; a.hp = 100; };
 
@@ -25,15 +25,15 @@ test('bases A, B, C e estações alcançáveis pelos dois times', () => {
   const G = freshGame(); for (const t of [0, 1]) { const r = W.reach(G.spawns[t][0], false, false); for (const b of G.bases) ok(r[b.cell], 'base ' + b.id + ' para time ' + t); ok(r[G.stationCell[t]], 'estação do time ' + t); }
 });
 test('subir e descer o Escadão Principal inteiro andando (física real)', () => {
-  const G = freshGame(); const a = G.actors[0]; placeAt(a, W.nearestOK(54, 41, 3)); a.yaw = 0; a.in.mz = 1;
-  step(G, 8); ok(a.z > 72, 'subiu os dois lances (z=' + a.z.toFixed(1) + ')'); ok(a.y > 3.0, 'altura ' + a.y.toFixed(1));
-  a.x = 50; a.z = 73.5; a.y = 8; a.yaw = -Math.PI / 2; step(G, 5); ok(a.x < 33, 'chegou ao Alto do Escadão (x=' + a.x.toFixed(1) + ')'); ok(a.y > 4.5, 'altura ' + a.y.toFixed(1));
-  a.x = 27; a.z = 84; a.y = 5; a.yaw = 0; step(G, 6); ok(a.z > 100, 'seguiu pela Rua do Alto até a mata (z=' + a.z.toFixed(1) + ')'); a.x = 27; a.z = 73.5; a.y = 5;
-  a.yaw = Math.PI / 2; step(G, 5.5); ok(a.x > 44, 'voltou ao patamar (x=' + a.x.toFixed(1) + ')'); a.x = 54; a.z = 70; a.yaw = Math.PI; step(G, 8); ok(a.z < 45, 'desceu até a praça (z=' + a.z.toFixed(1) + ')'); ok(a.y < 1.0, 'y=' + a.y.toFixed(2));
+  const G = freshGame(); const a = G.actors[0]; placeAt(a, W.nearestOK(54 * S.SC, 41 * S.SC, 3)); a.yaw = 0; a.in.mz = 1;
+  step(G, 10); ok(a.z > 72 * S.SC, 'subiu os dois lances (z=' + a.z.toFixed(1) + ')'); ok(a.y > 3.0, 'altura ' + a.y.toFixed(1));
+  a.x = 50 * S.SC; a.z = 73.5 * S.SC; a.y = 3.4; a.yaw = -Math.PI / 2; step(G, 6); ok(a.x < 33 * S.SC, 'chegou ao Alto do Escadão (x=' + a.x.toFixed(1) + ')'); ok(a.y > 4.5, 'altura ' + a.y.toFixed(1));
+  a.x = 27 * S.SC; a.z = 84 * S.SC; a.y = 5; a.yaw = 0; step(G, 8); ok(a.z > 100 * S.SC, 'seguiu pela Rua do Alto até a mata (z=' + a.z.toFixed(1) + ')'); a.x = 27 * S.SC; a.z = 73.5 * S.SC; a.y = 5;
+  a.yaw = Math.PI / 2; step(G, 7); ok(a.x > 44 * S.SC, 'voltou ao patamar (x=' + a.x.toFixed(1) + ')'); a.x = 54 * S.SC; a.z = 70 * S.SC; a.yaw = Math.PI; step(G, 10); ok(a.z < 45 * S.SC, 'desceu até a praça (z=' + a.z.toFixed(1) + ')'); ok(a.y < 1.0, 'y=' + a.y.toFixed(2));
 });
 test('caminhos: trilhas da mata, pontes do canal, quadra e passagem de baixo', () => {
   const G = freshGame(); const s0 = G.spawns[0][0];
-  for (const [nm, x, z] of [['Base A', S.CLEAR.A.c[0], S.CLEAR.A.c[1]], ['Base Vermelha', S.CLEAR.verm.c[0], S.CLEAR.verm.c[1]], ['Quadra do Baile', S.QUADRA.x, S.QUADRA.z], ['Palco', S.STAGE.x, S.STAGE.z], ['Base C', S.CLEAR.C.c[0], S.CLEAR.C.c[1]], ['Alto do Escadão', 28, 78], ['Beco da Mina', 56, 12], ['Clareira da mata', S.CLEAR.cl1.c[0], S.CLEAR.cl1.c[1]]]) {
+  for (const [nm, x, z] of [['Base A', S.CLEAR.A.c[0], S.CLEAR.A.c[1]], ['Base Vermelha', S.CLEAR.verm.c[0], S.CLEAR.verm.c[1]], ['Quadra do Baile', S.QUADRA.x, S.QUADRA.z], ['Palco', S.STAGE.x, S.STAGE.z], ['Base C', S.CLEAR.C.c[0], S.CLEAR.C.c[1]], ['Alto do Escadão', 28 * S.SC, 78 * S.SC], ['Beco da Mina', 56 * S.SC, 12 * S.SC], ['Base B — Largo da Serra', S.CLEAR.B.c[0], S.CLEAR.B.c[1]], ['Clareira da mata', S.CLEAR.cl1.c[0], S.CLEAR.cl1.c[1]]]) {
     const g = W.nearestOK(x, z, 6); ok(g >= 0, nm + ' tem chão navegável'); const p = W.path(s0, g, 400000); ok(p && p.length > 5, 'caminho até ' + nm); }
   for (const b of S.BRIDGES) { const m = [(b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2], c = W.nearestOK(m[0], m[1], 2); ok(c >= 0 && W.OK[c], 'ponte navegável em ' + m.map(v => v.toFixed(0))); }
 });
@@ -119,6 +119,21 @@ test('civil eliminado: -5%, nunca abaixo de 0, sem penalidade duplicada', () => 
   G.bases[0].owner = 0; const n3 = G.npcs.find(q => q.alive); if (n3) { G.damage(n3, 999, a, false); eq(G.bases[0].owner, 0, 'não tira a posse da base'); }
 });
 
+test('atropelamento: carro em velocidade mata quem entra na frente; parado não machuca', () => {
+  const G = freshGame(); const a = G.actors[0]; G.spawn(a); a.invuln = 0; const car = G.cars[0]; car.s = G.aveLen * 0.4; car.spd = 9; G.carPose(car);
+  a.x = car.x + car.fx * 2.6; a.z = car.z + car.fz * 2.6; a.y = 0; G.update(1 / 30); G.update(1 / 30); ok(!a.alive, 'atropelado morreu'); ok(G.events.some(e => e.type === 'kill' && e.cause === 'car'), 'morte registrada como atropelamento');
+  const b = G.actors[1]; G.spawn(b); b.invuln = 0; const c2 = G.cars[1]; c2.spd = 0; c2.max = 0; G.carPose(c2); b.x = c2.x + c2.fx * 2.4; b.z = c2.z + c2.fz * 2.4; b.y = 0; G.update(1 / 30); ok(b.alive, 'carro parado não mata');
+});
+test('polícia: viaturas entram na favela, policiais desembarcam, tomam base e vão embora', () => {
+  const G = S.makeGame(map, W, { allBots: true }); G.police.next = 0; G.police.next = 0; let ph = new Set(), took = false, n = 0; G.update(1 / 30); const team = G.police.team; ok(team === 0 || team === 1, 'escolheu um time: ' + team);
+  while (G.police.phase === 'chegando' && n++ < 30 * 150) G.update(1 / 30); eq(G.police.phase, 'incursao', 'viaturas chegaram (' + (n / 30).toFixed(1) + ' s)');
+  const cops = G.actors.filter(a => a.isPolice); eq(cops.length, 15, '15 policiais (3 viaturas)'); const fav = team === 0 ? S.POLY_LEFT : S.POLY_RIGHT; ok(G.police.cars.every(c => S.inPoly(c.x, c.z, fav) || Math.hypot(c.x - (team ? 193 : 72) * S.SC, c.z - 25 * S.SC) < 26), 'viaturas dentro da favela do time alvo');
+  for (const a of G.actors) if (!a.isPolice) { a.alive = false; a.respawnT = 1e9; } // só a polícia em campo para testar a tomada
+  for (let k = 0; k < 30 * 120 && !took; k++) { G.update(1 / 30); for (const e of G.events) if (e.type === 'base' && e.team === 2) took = true; G.events.length = 0; } ok(took, 'polícia tomou uma base da favela alvo');
+  const owned = G.bases.filter(b => b.owner === 2).map(b => b.id); ok(owned.every(id => G.policeTargets(team).some(b => b.id === id)), 'só bases da favela alvo: ' + owned);
+  for (const b of G.bases) if (b.owner !== 2) { b.owner = -1; b.prog = 0; } const s0 = G.score.slice(); for (let k = 0; k < 30 * 20; k++) G.update(1 / 30); ok(G.score[0] === s0[0] && G.score[1] === s0[1], 'base com a polícia não pontua para ninguém');
+  G.police.endT = G.t; G.update(1 / 30); eq(G.police.phase, 'idle', 'operação terminou'); eq(G.actors.filter(a => a.isPolice).length, 0, 'policiais foram embora'); ok(G.bases.every(b => b.owner !== 2), 'bases voltaram a ficar neutras');
+});
 // ---------------- granadas ----------------
 test('granada: estoque de 2, não lança sem estoque, explode e causa dano em área', () => {
   const G = freshGame(); const a = G.actors[0], b = G.actors[1]; G.spawn(a); G.spawn(b); a.invuln = b.invuln = 0;
@@ -129,7 +144,7 @@ test('granada: estoque de 2, não lança sem estoque, explode e causa dano em á
   step(G, 3); ok(G.events.some(e => e.type === 'gboom'), 'explodiu'); ok(b.hp < 100 || !b.alive, 'dano em área (hp ' + Math.round(b.hp) + ')'); eq(G.grenades.length, 0);
 });
 test('granada respeita o terreno: nunca fica abaixo do chão', () => {
-  const G = freshGame(); const a = G.actors[0]; G.spawn(a); placeAt(a, W.nearestOK(54, 41, 3)); a.yaw = 0; a.pitch = 0.3; a.in.gren = true; let below = 0;
+  const G = freshGame(); const a = G.actors[0]; G.spawn(a); placeAt(a, W.nearestOK(54 * S.SC, 41 * S.SC, 3)); a.yaw = 0; a.pitch = 0.3; a.in.gren = true; let below = 0;
   for (let k = 0; k < 90; k++) { G.update(1 / 30); for (const g of G.grenades) if (g.y < W.hCell(g.x, g.z) - 0.05 && !W.blockedAt(g.x, g.z)) below++; } eq(below, 0, 'quadros abaixo do chão');
 });
 test('reabastecer na base devolve as granadas', () => {
@@ -155,9 +170,9 @@ test('bot sem munição volta à base, reabastece e retorna ao combate', () => {
   for (let k = 0; k < 30 * 120 && !got; k++) { a.invuln = 5; G.update(1 / 30); if (G.events.some(e => e.type === 'refill' && e.id === a.id)) got = true; G.events.length = 0; }
   ok(got, 'reabasteceu na estação'); eq(a.ammo.rifle.res, 180); ok(a.ai.mode !== 'refill' || true);
 });
-test('carros andam pela avenida, param para pedestres e bloqueiam a passagem', () => {
+test('carros andam pela avenida, param para pedestres a uma distância segura e bloqueiam a passagem', () => {
   const G = freshGame(); const a = G.actors[0]; G.spawn(a); const car = G.cars[0]; const s0 = car.s; step(G, 2); ok(Math.abs(car.s - s0) > 8, 'andou ' + Math.abs(car.s - s0).toFixed(1) + ' m');
-  car.s = G.aveLen * 0.45; car.spd = 8; G.carPose(car); a.x = car.x + car.fx * 7; a.z = car.z + car.fz * 7; a.y = 0; a.alive = true; step(G, 3); ok(car.spd < 0.5, 'parou para o pedestre (vel ' + car.spd.toFixed(2) + ')'); ok(Math.hypot(car.x - a.x, car.z - a.z) > 3, 'não atropelou');
+  car.s = G.aveLen * 0.45; car.spd = 8; G.carPose(car); a.x = car.x + car.fx * 13; a.z = car.z + car.fz * 13; a.y = 0; a.alive = true; step(G, 3); ok(car.spd < 0.5, 'parou para o pedestre (vel ' + car.spd.toFixed(2) + ')'); ok(Math.hypot(car.x - a.x, car.z - a.z) > 3, 'não atropelou');
   const box = W.dyn[0]; ok(!W.fits(box.x, box.z, 0, 0.3), 'carro é obstáculo');
   const t = W.rayDyn(box.x - box.fz * 10, 1, box.z + box.fx * 10, box.fz, 0, -box.fx, 50); ok(t < 10.5, 'bala para no carro (t=' + t.toFixed(1) + ')');
 });

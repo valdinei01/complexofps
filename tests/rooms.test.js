@@ -32,7 +32,7 @@ test('limite 5 contra 5 com bots ocupando vagas; jogador novo substitui bot', ()
 test('só o anfitrião controla bots e inicia; troca de time respeita vagas', () => {
   const { io, rm } = setup(); const a = player(io, 'Ana'), b = player(io, 'Beto'); const r = a.emit('room:create', { name: 'X', bots0: 0, bots1: 0 }); b.emit('room:join', { id: r.id }); const room = rm.rooms.get(r.id);
   b.emit('lobby:bots', { team: 0, n: 3 }); eq(room.bots[0], 0, 'convidado não mexe em bots'); ok(b.emit('lobby:start').error, 'convidado não inicia');
-  a.emit('lobby:bots', { team: 0, n: 9 }); eq(room.bots[0], 4, 'limitado pelas vagas'); b.emit('lobby:team', { team: 0 }); eq(room.players.get('key-Beto').team, 1, 'time cheio: troca recusada');
+  a.emit('lobby:bots', { team: 0, n: 9 }); eq(room.bots[0], 4, 'limitado pelas vagas'); b.emit('lobby:team', { team: 0 }); eq(room.players.get('key-Beto').team, 0, 'time cheio de bots: um bot sai e a troca acontece'); eq(room.bots[0], 3, 'bot retirado'); b.emit('lobby:team', { team: 1 });
   a.emit('lobby:bots', { team: 0, n: 2 }); b.emit('lobby:team', { team: 0 }); eq(room.players.get('key-Beto').team, 0, 'troca aceita com vaga');
 });
 test('partida: início, fotografias isoladas por sala, sem jogadores/bots duplicados', () => {
@@ -52,7 +52,7 @@ test('servidor valida movimento e munição (cliente não inventa munição nem 
 });
 test('movimento válido é aceito em qualquer parte do mapa grande (regressão: limite antigo de 80 m)', () => {
   const { io, rm } = setup(); const a = player(io, 'Ana'); const r = a.emit('room:create', { name: 'M', bots0: 0, bots1: 0 }); a.emit('lobby:start'); ticks(rm, 20);
-  const room = rm.rooms.get(r.id), act = room.game.actors[0], W = room.game.W, c = W.nearestOK(230, 60, 6); act.x = W.cellX(c); act.z = W.cellZ(c); act.y = room.game.map.H[c];
+  const room = rm.rooms.get(r.id), act = room.game.actors[0], W = room.game.W, c = W.nearestOK(262, 40, 6); act.x = W.cellX(c); act.z = W.cellZ(c); act.y = room.game.map.H[c];
   const nc = W.nearestOK(act.x, act.z + 0.3, 2); clock += 50; a.emit('game:input', { x: W.cellX(nc), y: room.game.map.H[nc], z: W.cellZ(nc), yaw: 0, pitch: 0 }); eq(act.x, W.cellX(nc), 'aceito em x=' + act.x); ok(!room.players.get('key-Ana').rejects, 'sem rejeição');
 });
 test('granadas: servidor limita o estoque mesmo com pedidos repetidos; dia/noite sincronizado', () => {
@@ -62,6 +62,40 @@ test('granadas: servidor limita o estoque mesmo com pedidos repetidos; dia/noite
   const thrown = (a.got['game:snap'] || []).reduce((n, sn) => n + sn.ev.filter(e => e.type === 'gthrow' && e.id === act.id).length, 0);
   eq(thrown, 2, 'só 2 granadas mesmo com 12 pedidos'); eq(a.last['game:snap'].me.gn, 0, 'contador zerado');
   const dnA = a.last['game:snap'].dn, dnB = b.last['game:snap'].dn; ok(typeof dnA === 'number' && dnA === dnB, 'mesma hora do dia para os dois');
+});
+test('entrar escolhendo o time: no lobby tira um bot do time; time só de humanos cheio recusa', () => {
+  const { io, rm } = setup(); const a = player(io, 'Ana'); const r = a.emit('room:create', { name: 'T', bots0: 4, bots1: 5 }); const room = rm.rooms.get(r.id);
+  const info = a.emit('room:info', { id: r.id }); eq(info.teams[1].bots, 5, 'resumo mostra 5 bots no Vermelho');
+  const b = player(io, 'Beto'); const j = b.emit('room:join', { id: r.id, team: 1 }); ok(j.ok, 'Beto entrou no Vermelho'); eq(room.players.get('key-Beto').team, 1); eq(room.bots[1], 4, 'um bot saiu para dar lugar'); eq(rm.teamCount(room, 1), 5, 'time continua com 5');
+  room.bots[0] = 0; for (const n of ['C1', 'C2', 'C3', 'C4']) player(io, n).emit('room:join', { id: r.id, team: 0 }); eq(rm.teamCount(room, 0), 5);
+  const x = player(io, 'Xis').emit('room:join', { id: r.id, team: 0 }); ok(x.error && x.teamFull, 'time cheio de humanos recusa: ' + x.error);
+});
+test('entrar com a partida em andamento: assume o lugar de um bot do time escolhido; ao sair, o bot volta', () => {
+  const { io, rm } = setup(); const a = player(io, 'Ana'); const r = a.emit('room:create', { name: 'H', bots0: 4, bots1: 5 }); a.emit('lobby:start'); ticks(rm, 30);
+  const room = rm.rooms.get(r.id), G = room.game, n0 = G.actors.length, bots1 = G.actors.filter(q => q.isBot && q.team === 1).length;
+  const b = player(io, 'Beto'); const j = b.emit('room:join', { id: r.id, team: 1 }); ok(j.ok, 'entrou'); const pb = room.players.get('key-Beto');
+  ok(pb.actor && !pb.actor.isBot && pb.actor.team === 1 && pb.actor.name === 'Beto', 'Beto controla um personagem do Vermelho'); eq(G.actors.length, n0, 'nenhum personagem a mais'); eq(G.actors.filter(q => q.isBot && q.team === 1).length, bots1 - 1, 'um bot a menos');
+  ok(b.last['game:start'] && b.last['game:start'].myId === pb.actor.id, 'recebeu o início da partida com o seu personagem'); ok((a.last['game:roster'] || []).some(q => q.name === 'Beto' && !q.bot), 'os outros jogadores recebem a lista atualizada');
+  ticks(rm, 10); ok(b.last['game:snap'] && b.last['game:snap'].me, 'recebe o estado da partida');
+  b.emit('room:leave'); ticks(rm, 3); eq(G.actors.length, n0, 'personagem continua na partida'); eq(G.actors.filter(q => q.isBot && q.team === 1).length, bots1, 'o bot voltou');
+});
+test('voz por proximidade: o servidor repassa só para quem está perto e nunca para outra sala', () => {
+  const { io, rm } = setup(); const a = player(io, 'Ana'), b = player(io, 'Beto'), c = player(io, 'Caio'), z = player(io, 'Zé');
+  const r = a.emit('room:create', { name: 'V', bots0: 0, bots1: 0 }); b.emit('room:join', { id: r.id }); c.emit('room:join', { id: r.id }); const r2 = z.emit('room:create', { name: 'Outra', bots0: 0, bots1: 0 });
+  a.emit('lobby:start'); z.emit('lobby:start'); ticks(rm, 20); const room = rm.rooms.get(r.id), P2 = k => room.players.get('key-' + k).actor;
+  P2('Ana').x = 60; P2('Ana').z = 30; P2('Beto').x = 66; P2('Beto').z = 30; P2('Caio').x = 60; P2('Caio').z = 110; for (const k of ['Ana', 'Beto', 'Caio']) P2(k).y = 0;
+  a.emit('voice:data', 'QUJD'); const gb = (b.got['voice:data'] || []).length, gc = (c.got['voice:data'] || []).length, gz = (z.got['voice:data'] || []).length;
+  eq(gb, 1, 'Beto (6 m) recebe'); eq(b.last['voice:data'].id, P2('Ana').id, 'com o id de quem fala'); eq(gc, 0, 'Caio (60 m) não recebe'); eq(gz, 0, 'outra sala não recebe'); eq((a.got['voice:data'] || []).length, 0, 'quem fala não recebe o próprio áudio');
+  for (let k = 0; k < 100; k++) a.emit('voice:data', 'QUJD'); ok((b.got['voice:data'] || []).length <= 41, 'limite de 40 trechos por segundo (' + (b.got['voice:data'] || []).length + ')');
+  a.emit('voice:data', { x: 1 }); a.emit('voice:data', 'A'.repeat(7000)); ok(true, 'dados inválidos são ignorados sem erro');
+});
+test('operação policial no servidor: viaturas no estado, policiais entram na lista e saem no fim', () => {
+  const { io, rm } = setup(); const a = player(io, 'Ana'); const r = a.emit('room:create', { name: 'P', bots0: 4, bots1: 5 }); a.emit('lobby:start'); ticks(rm, 20);
+  const room = rm.rooms.get(r.id), G = room.game; G.police.next = G.t; ticks(rm, 2); eq(G.police.phase, 'chegando', 'operação começou');
+  ok(a.last['game:snap'].pol && a.last['game:snap'].pol.ph === 'chegando', 'fase da operação vai no estado'); let n = 0; while (G.police.phase === 'chegando' && n++ < 30 * 60) { clock += 33; rm.tick(); }
+  eq(G.police.phase, 'incursao', 'viaturas chegaram e os policiais desembarcaram'); ticks(rm, 4); ok((a.last['game:roster'] || []).filter(q => q.police).length === 15, '15 policiais na lista dos jogadores');
+  ok(a.last['game:snap'].pol.c.length === 3 && a.last['game:snap'].pol.c.every(c => c[4] === 1), 'três viaturas estacionadas');
+  G.endOperation('retirada'); ticks(rm, 3); eq(G.actors.filter(q => q.isPolice).length, 0, 'policiais saem'); ok(!(a.last['game:roster'] || []).some(q => q.police), 'lista atualizada');
 });
 test('desconexão e reconexão voltam ao mesmo personagem; saída do anfitrião passa o comando', () => {
   const { io, rm } = setup(); const a = player(io, 'Ana'), b = player(io, 'Beto'); const r = a.emit('room:create', { name: 'R', bots0: 0, bots1: 0 }); b.emit('room:join', { id: r.id }); a.emit('lobby:start'); ticks(rm, 10);

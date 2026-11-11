@@ -10,9 +10,9 @@ const FAKE = `window.io = function () {
   window.__fromServer = (e, d) => { for (const f of (h[e] || []).slice()) f(d); };
   setTimeout(() => window.__fromServer('connect'), 10); return s; };`;
 (async () => {
-  const browser = await chromium.launch({ channel: 'chromium', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const browser = await chromium.launch({ channel: 'chromium', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
   const mk = async (name, w, h, mobile) => {
-    const ctx = await browser.newContext(mobile ? { viewport: { width: w, height: h }, isMobile: true, hasTouch: true } : { viewport: { width: w, height: h } }); const page = await ctx.newPage(); const errs = [];
+    const ctx = await browser.newContext(mobile ? { viewport: { width: w, height: h }, isMobile: true, hasTouch: true } : { viewport: { width: w, height: h } }); await ctx.grantPermissions(['microphone'], { origin: 'http://localhost:8124' }); const page = await ctx.newPage(); const errs = [];
     page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/fonts|ERR_NAME|404/.test(m.text())) errs.push(m.text()); });
     const client = io.connect(); let q = Promise.resolve();
     client._recv = (ev, d) => { q = q.then(() => page.evaluate(([e, x]) => window.__fromServer && window.__fromServer(e, x), [ev, d]).catch(() => {})); };
@@ -28,9 +28,10 @@ const FAKE = `window.io = function () {
   await A.page.click('[data-go=rooms]'); await A.page.waitForTimeout(500); await A.page.click('#create'); await A.page.fill('#rp', 'laje'); await A.page.fill('#b0', '3'); await A.page.fill('#b1', '4'); await A.page.click('.mcard #ok');
   await A.page.waitForSelector('#lob .teams', { timeout: 20000 }); const code = await A.page.evaluate(() => EscApp.lobby.id); console.log('sala criada:', code);
   // Beto entra pelo link de convite com senha errada e depois certa
-  await B.page.goto('http://localhost:8124/sala/' + code); await B.page.waitForSelector('#pw', { timeout: 30000 }); await B.page.fill('#pw', 'errada'); await B.page.click('.mcard #ok');
+  await B.page.goto('http://localhost:8124/sala/' + code); await B.page.waitForSelector('#tp0', { timeout: 30000 }); console.log('Beto vê a escolha de time:', await B.page.evaluate(() => document.querySelector('.teampick').innerText.replace(/\n/g, ' '))); await B.page.$eval('#tp0', b => b.click()); await B.page.waitForSelector('#pw', { timeout: 30000 }); await B.page.fill('#pw', 'errada'); await B.page.click('.mcard #ok');
   await B.page.waitForSelector('.mcard .err', { timeout: 20000 }); console.log('senha errada recusada: sim'); await B.page.fill('#pw', 'laje'); await B.page.click('.mcard #ok');
   await B.page.waitForSelector('#lob .teams', { timeout: 20000 }); await A.page.waitForTimeout(500);
+  console.log('Beto entrou no time escolhido (Azul):', await A.page.evaluate(() => (EscApp.lobby.players.find(p => p.name === 'Beto') || {}).team === 0));
   console.log('lobby visto pela Ana:', await A.page.evaluate(() => EscApp.lobby.players.map(p => p.name + '/' + p.team + (p.host ? '*' : '')).join(' ') + ' bots ' + JSON.stringify(EscApp.lobby.bots)));
   await A.page.screenshot({ path: 'tests/shots/on_lobbyA.png', timeout: 120000 }); await B.page.screenshot({ path: 'tests/shots/on_lobbyB.png', timeout: 120000 });
   console.log('Beto vê botão iniciar?', await B.page.evaluate(() => !!document.querySelector('#st')));
@@ -49,6 +50,11 @@ const FAKE = `window.io = function () {
   await A.page.evaluate(() => { EscPlay.sess.input.fire = true; }); await A.page.waitForTimeout(1500); await A.page.evaluate(() => { EscPlay.sess.input.fire = false; }); await A.page.waitForTimeout(800);
   console.log('munição da Ana (servidor):', JSON.stringify(sv.ammo.rifle), '| cliente:', await A.page.evaluate(() => JSON.stringify(EscPlay.sess.me.ammo.rifle)));
   await A.page.screenshot({ path: 'tests/shots/on_gameA.png', timeout: 120000 }); await B.page.screenshot({ path: 'tests/shots/on_gameB.png', timeout: 120000 });
+  // voz pelo servidor: Ana liga o microfone (simulado) perto do Beto
+  { const pa = [...room.players.values()].find(q => q.name === 'Ana'), pb = [...room.players.values()].find(q => q.name === 'Beto'); pb.actor.x = pa.actor.x + 3; pb.actor.z = pa.actor.z; pb.actor.y = pa.actor.y; pb.correct = true; await A.page.waitForTimeout(800);
+    const mic = await A.page.evaluate(async () => { EscPlay.audio.ensure(); return EscPlay.voice.toggleMic(); }); await B.page.evaluate(() => EscPlay.audio.ensure()); await A.page.waitForTimeout(4000);
+    const v = await B.page.evaluate(id => { const sp = EscPlay.voice.speakers.get(id); return { recebidos: EscPlay.voice.received, volume: sp ? +sp.g.toFixed(2) : -1 }; }, pa.actor.id); const sent = await A.page.evaluate(() => EscPlay.voice.sent);
+    console.log('voz: microfone', JSON.stringify(mic), '| trechos enviados pela Ana', sent, '| recebidos pelo Beto', v.recebidos, '| volume no Beto (3 m)', v.volume); }
   // Ana lança uma granada: o servidor desconta e o Beto vê a explosão
   await A.page.evaluate(() => { EscPlay.sess.input.gren = true; }); await A.page.waitForTimeout(4500);
   console.log('granadas da Ana (servidor):', sv.gren, '| cliente:', await A.page.evaluate(() => EscPlay.sess.me.gren), '| hora do dia igual nos dois:', (await A.page.evaluate(() => EscPlay.sess.dayT.toFixed(3))) === (await B.page.evaluate(() => EscPlay.sess.dayT.toFixed(3))), '| carros no Beto:', await B.page.evaluate(() => EscPlay.sess.cars.filter(c => c.x).length));
